@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
+import { outboxSeenId, outboxFailedId } from './store.mjs';
 
 const CONTROL = new Set(['/stop', '/status', '/help', '/approve', '/reject', '/answer']);
 const command = text => text.trim().split(/\s+/)[0].toLowerCase();
@@ -82,7 +83,7 @@ export class Bridge {
   }
   get connected() { return this.#connected; }
   get error() { return this.#error; }
-  get status() { return { running: this.#running && !this.#closing, connected: this.#connected, error: this.#error }; }
+  get status() { return { running: this.#running && !this.#closing && !this.#abort?.signal.aborted, connected: this.#connected, error: this.#error }; }
   async start() {
     if (this.#closing) throw new Error('Bridge stopping');
     if (this.#running) return;
@@ -90,10 +91,10 @@ export class Bridge {
     try {
       await this.#store.update(state => {
         for (const row of state.outbox) {
-          if (row.status === 'sending') row.status = 'uncertain';
+          if (row.status === 'sending') row.status = 'failed';
           if (row.status === 'queued' && row.id.startsWith('wechat-received-')) row.status = 'cancelled';
         }
-        for (const row of state.inbox) if (row.status === 'control-pending') row.status = 'needs-review';
+        for (const row of state.inbox) if (row.status === 'control-pending') row.status = 'failed';
       });
       this.#timer = setInterval(() => { this.#handleControls(); this.#wake(); }, 250);
       this.#timer.unref?.();
@@ -108,8 +109,13 @@ export class Bridge {
       clearInterval(this.#timer);
       this.#abort.abort();
       await Promise.allSettled([this.#pollTask, this.#workTask, this.#sendTask, ...this.#controlTasks]);
-      this.#running = false; this.#connected = false; this.#closing = null;
-    })();
+      this.#connected = false;
+      await this.#store.update(state => {
+        for (const row of state.outbox) if (row.status === 'sending') row.status = 'failed';
+        for (const row of state.inbox) if (row.status === 'control-pending') row.status = 'failed';
+      });
+      this.#running = false;
+    })().finally(() => { this.#closing = null; });
     return this.#closing;
   }
   async #poll(signal) {
@@ -140,7 +146,8 @@ export class Bridge {
     const chars = Array.from(text);
     for (let offset = 0, index = 0; offset < chars.length; offset += 800, index++) {
       const id = `wechat-reply-${item.id}-${index}`;
-      if (!state.outbox.some(row => row.id === id) && !state.seen.includes(`\0outbox\0${id}`)) state.outbox.push({
+      if (!state.outbox.some(row => row.id === id)
+        && !state.seen.includes(outboxSeenId(id)) && !state.seen.includes(outboxFailedId(id))) state.outbox.push({
         id, userId: item.userId, contextToken: item.contextToken,
         text: chars.slice(offset, offset + 800).join(''), status: 'queued',
       });
@@ -181,7 +188,7 @@ export class Bridge {
     } catch (error) {
       await this.#store.update(state => {
         const row = state.inbox.find(r => r.id === item.id);
-        if (row) { row.status = 'needs-review'; row.failure = { stage: 'control', code: errorName(error) }; }
+        if (row) row.status = 'failed';
       });
       throw error;
     }
@@ -227,7 +234,7 @@ export class Bridge {
           this.#error = errorName(error);
           await this.#store.update(state => {
             const r = state.inbox.find(row => row.id === item.id);
-            if (r) { r.status = 'failed'; r.failure = { stage: 'create', code: errorName(error) }; }
+            if (r) { r.status = 'failed'; this.#enqueue(state, r, '新会话创建失败，消息已丢弃。请重新发送 /new。'); }
           });
         }
         continue;
@@ -235,19 +242,17 @@ export class Bridge {
       try { await this.#process(item, signal); }
       catch (error) {
         if (signal.aborted) return;
-        if (error.code === 'observation-timeout') {
-          try { await delay(1000, undefined, { signal }); } catch { return; }
-          continue;
-        }
         this.#error = errorName(error);
         await this.#store.update(state => {
           const r = state.inbox.find(row => row.id === item.id);
-          if (r && r.status !== 'done') {
-            r.status = error.beforeSubmission ? 'failed' : 'needs-review';
-            r.failure = { stage: error.stage ?? 'unknown', code: errorName(error) };
-            this.#enqueue(state, { ...r, id: `failure-${r.id}` }, error.beforeSubmission
-              ? '任务准备失败，尚未提交给 DSH。请在 DSH 中检查微信插件后重试。'
-              : '请求状态无法确认，已暂停自动处理；请在 DSH 中人工核查，避免重复执行。');
+          if (r) {
+            r.status = 'failed';
+            const text = error.code === 'observation-timeout'
+              ? '等待回复超时，消息跟踪已丢弃。任务可能仍在运行，请在 DSH 会话中查看。'
+              : error.beforeSubmission
+                ? '任务准备失败，尚未提交给 DSH，消息已丢弃。请重新发送。'
+                : '请求状态无法确认，消息已丢弃，不会自动重试。请在 DSH 会话中查看。';
+            this.#enqueue(state, { ...r, id: `failure-${r.id}` }, text);
           }
         });
       }
@@ -300,8 +305,8 @@ export class Bridge {
       if (!['pending', 'admitted', 'completed'].includes(found?.status)) {
         await this.#store.update(state => {
           const r = state.inbox.find(row => row.id === item.id);
-          r.status = 'needs-review';
-          this.#enqueue(state, { ...r, id: `failure-${r.id}` }, '请求状态无法确认，已暂停自动处理；请在 DSH 中人工核查，避免重复执行。');
+          r.status = 'failed';
+          this.#enqueue(state, { ...r, id: `failure-${r.id}` }, '请求状态无法确认，消息已丢弃，不会自动重试。请在 DSH 会话中查看。');
         });
         this.#wake();
         return; // Unknown never replays a potentially admitted prompt.
@@ -329,11 +334,7 @@ export class Bridge {
   async #sendLoop() {
     const signal = this.#abort.signal;
     while (!signal.aborted) {
-      const entries = this.#store.snapshot().outbox;
-      const item = entries.find(r => r.status === 'queued' && (
-        !r.id.startsWith('wechat-reply-') || !entries.some(previous =>
-          previous.status === 'uncertain'
-          && previous.id.startsWith(r.id.slice(0, r.id.lastIndexOf('-') + 1)))));
+      const item = this.#store.snapshot().outbox.find(r => r.status === 'queued');
       if (!item) return;
       try {
         await this.#store.update(state => { state.outbox.find(r => r.id === item.id).status = 'sending'; });
@@ -356,19 +357,8 @@ export class Bridge {
         await this.#store.update(state => { state.outbox.find(r => r.id === item.id).status = 'sent'; });
       } catch (error) {
         if (signal.aborted) return;
-        const status = (item.media && error?.uncertain !== true)
-          || error?.uncertain === false ? 'failed' : 'uncertain';
-        await this.#store.update(state => {
-          state.outbox.find(r => r.id === item.id).status = status;
-          if (status === 'failed' && item.id.startsWith('wechat-reply-')) {
-            const group = item.id.slice(0, item.id.lastIndexOf('-') + 1);
-            for (const row of state.outbox) {
-              if (row.id.startsWith(group) && row.status === 'queued') row.status = 'cancelled';
-            }
-          }
-        });
-        this.#error = status === 'failed' ? 'send-failed' : 'send-uncertain';
-        return;
+        await this.#store.update(state => { state.outbox.find(r => r.id === item.id).status = 'failed'; });
+        this.#error = 'send-failed';
       }
     }
   }

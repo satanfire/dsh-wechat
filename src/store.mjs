@@ -5,6 +5,7 @@ import { normalizeMediaItems } from './ilink.mjs';
 import { isContextToken } from './push.mjs';
 
 const MAX_INBOX = 1_000;
+const MAX_SEEN = 10_000;
 const MAX_MEDIA_ITEMS = 16;
 const MAX_MESSAGE_ITEMS = 64;
 const MAX_MEDIA_BYTES = 50 * 1024 * 1024;
@@ -72,22 +73,26 @@ async function persist(directory, state) {
   }
 }
 
-const OUTBOX_SEEN_PREFIX = '\u0000outbox\u0000';
-const outboxSeenId = (id) => `${OUTBOX_SEEN_PREFIX}${id}`;
+export const outboxSeenId = id => `\u0000outbox\u0000${id}`;
+export const outboxFailedId = id => `\u0000outbox-failed\u0000${id}`;
 
 function compact(state) {
   const seen = new Set(state.seen);
-  state.inbox = state.inbox.filter((item) => {
-    if (item.status !== 'done' && item.status !== 'cancelled') return true;
+  state.inbox = state.inbox.filter(item => {
+    if (!['done', 'cancelled', 'failed', 'needs-review'].includes(item.status)) return true;
     seen.add(item.id);
     return false;
   });
-  state.outbox = state.outbox.filter((item) => {
-    if (item.status !== 'sent' && item.status !== 'cancelled') return true;
-    seen.add(outboxSeenId(item.id));
+  const failedGroups = new Set(state.outbox
+    .filter(item => ['failed', 'uncertain', 'cancelled'].includes(item.status) && item.id.startsWith('wechat-reply-'))
+    .map(item => item.id.slice(0, item.id.lastIndexOf('-') + 1)));
+  state.outbox = state.outbox.filter(item => {
+    const droppedSuffix = item.status === 'queued' && failedGroups.has(item.id.slice(0, item.id.lastIndexOf('-') + 1));
+    if (!droppedSuffix && !['sent', 'cancelled', 'failed', 'uncertain'].includes(item.status)) return true;
+    seen.add(item.status === 'sent' ? outboxSeenId(item.id) : outboxFailedId(item.id));
     return false;
   });
-  state.seen = [...seen];
+  state.seen = [...seen].slice(-MAX_SEEN);
 }
 
 function boundedString(value, limit, label) {
@@ -236,8 +241,9 @@ async function acquireLock(directory) {
  * is serialized by store.lock.recover; a leftover recovery gate, invalid PID,
  * or live/reused PID requires manual inspection and is never auto-stolen.
  * update(mutator) receives a private draft and commits its mutations serially. Do not
- * modify a draft after its mutator settles. Inbox 'done'/'cancelled' and outbox
- * 'sent'/'cancelled' are terminal: they are pruned on commit, retaining seen IDs.
+ * modify a draft after its mutator settles. Completed, cancelled, failed and
+ * ambiguous rows are pruned on commit. Only the latest 10,000 dedup IDs remain.
+ * Interrupted sends/controls are discarded on reopen, without replay.
  * Failed pre-rename writes leave state intact. A post-rename sync failure marks the
  * store unusable until reopened and reconciled.
  */
@@ -270,6 +276,10 @@ export class Store {
       try {
         const raw = await fs.readFile(path.join(resolved, 'store.json'), 'utf8');
         state = validate(JSON.parse(raw)).value;
+        for (const row of state.outbox) if (row.status === 'sending') row.status = 'failed';
+        for (const row of state.inbox) if (row.status === 'control-pending') row.status = 'failed';
+        compact(state);
+        state = await persist(resolved, state);
       } catch (error) {
         if (error.code !== 'ENOENT') throw error;
         state = await persist(resolved, initialState());
@@ -373,7 +383,7 @@ export class Store {
       return Promise.reject(new TypeError('Invalid outbound entry'));
     }
     return this.update((state) => {
-      if (state.seen.includes(outboxSeenId(entry.id))
+      if (state.seen.includes(outboxSeenId(entry.id)) || state.seen.includes(outboxFailedId(entry.id))
         || state.outbox.some((item) => item.id === entry.id)) return false;
       state.outbox.push({ id: entry.id, userId: entry.userId,
         contextToken: entry.contextToken, text: entry.text, status: 'queued' });

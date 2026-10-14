@@ -54,10 +54,12 @@ test('push targets only bound owner and returns queue state; repeated call does 
   assert.equal(JSON.stringify(first).includes('private-context'), false);
   await assert.rejects(controller.enqueueText('different', call()), /调用 ID/);
   await store.update(s => { s.outbox[0].status = 'uncertain'; });
-  assert.equal((await controller.enqueueText('通知', call())).status, 'uncertain');
-  assert.equal(store.snapshot().outbox.length, 1);
+  assert.equal((await controller.enqueueText('通知', call())).status, 'failed');
+  assert.equal(store.snapshot().outbox.length, 0);
+  const sentCall = call({ callId: 'successful-call' });
+  await controller.enqueueText('通知', sentCall);
   await store.update(s => { s.outbox[0].status = 'sent'; });
-  assert.equal((await controller.enqueueText('通知', call())).status, 'sent');
+  assert.equal((await controller.enqueueText('通知', sentCall)).status, 'sent');
   assert.equal(store.snapshot().outbox.length, 0);
 });
 
@@ -159,4 +161,14 @@ test('Agent disposal removes full schema; another Agent can load independently',
   await assert.rejects(loader.execute({},f.exec(a.agent)),/live session/);
   await loader.execute({},f.exec(b.agent)); assert.equal(b.scoped.size,1);
   f.close(); assert.equal(b.scoped.size,0);
+});
+
+
+test('controller status omits delivery backlog and uncertain counts', async t => {
+  const {store, controller} = await fixture(t);
+  await store.enqueue({id:'pending',userId:'owner',contextToken:'token',text:'pending'});
+  const status = controller.status();
+  assert.equal(Object.hasOwn(status, 'outboxDepth'), false);
+  assert.equal(Object.hasOwn(status, 'uncertainCount'), false);
+  assert.equal(status.bound, true);
 });

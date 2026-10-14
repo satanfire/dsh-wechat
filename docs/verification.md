@@ -1,34 +1,32 @@
-# Verification record
+# v0.4.0 验证记录
 
-## Release 0.3.1
+当前状态：自动化检查已通过，浏览器实显和真实微信发送尚未验收。
 
-QR generation uses a checked-in reproducible bundle. Tests compare decoded PNG pixels with upstream, check artifact hashes/licenses, and install the real tarball into a separate directory with development dependencies omitted. That production install must contain only the plugin and must generate the login PNG without resolving qrcode or esbuild externally. These tests do not scan a live account QR or send WeChat messages.
+2026-10-14 验证结果：`npm test` 的 144 项全部通过；`npm run check` 通过；`npm run check:package` 验证 29 个发布文件、隔离生产安装和登录二维码生成；`git diff --check` 通过。发布包不含离线恢复脚本。
 
-## Release 0.3.0
+参考运行时为 DSH 0.2.0-rc.2。未验证的运行时和操作系统不扩大兼容声明。
 
-Review scope: source code, current Harness Service/Event contracts, package contents and automated tests. No private credentials or local live message stores were inspected. No live WeChat message was sent during the public-version review.
+## 已通过的自动化覆盖
 
-Harness reference runtime: 0.2.0-rc.2. Local environment: macOS. The public manifest intentionally does not declare support for newer/unverified Harness versions.
+- 执行 `npm run check`、`npm test`、`npm run check:package`，结果如上。
+- 确认入站失败不重试，入站和出站失败或结果不明后仅留去重 ID，不留正文。
+- 确认提交结果未知不重提，并提示状态不明、已丢弃，可在 Web 查看。
+- 确认观察超时丢弃跟踪并提示到 Web 查看，DSH 任务仍可继续运行。
+- 确认已明确提交的任务正常重启后继续观察，不重新提交；`queued` 未发送任务可恢复。
+- 确认重启清理中断的 `sending` 及遗留失败、`uncertain`、`control-pending` 记录。
+- 确认旧失败记录在存储打开时自动清理，绑定、游标和会话不变。
+- 确认分段回复失败或结果不明后，尚未发送的后续段被丢弃，其他消息继续处理。
+- 确认 iLink 层仍仅对已知未接受的网络请求有限重试。
+- 确认去重 ID 上限为最近 10,000 个；覆盖上限淘汰及非常旧重放的边界。
+- 确认工具的 `queued` 不表示送达、`sent` 仅表示服务接受，失败去重结果不误报 `sent`。
+- 确认离线恢复脚本及对应测试已删除，安装包不含该脚本。
 
-Automated validation includes:
+## 待执行的手动验收
 
-- Message/cursor persistence, crash lock handling, deduplication and restart recovery.
-- Preservation of failed inbound payloads; continued observation after timeout; refusal to replay uncertain submissions.
-- Immediate stop after uncertain text/media acceptance; bounded retries only after known rejection.
-- Rejection of Web-origin, pending, mixed-turn, ended-turn and uncorrelated media/interaction calls.
-- Exact phone approval arguments, Web fallback when unavailable/oversized, expiration and one-shot decisions.
-- File containment, escaping symlinks, upload/download bounds and immutable attachment snapshots.
-- Manifest/client ID agreement, syntax, lockfile identity, and real npm tarball imports/file allowlist.
+1. 在干净 profile 安装、扫码、启停、重启和退出登录。
+2. 检查深浅色设置页；确认两行发件状态及计数移除，控制台无新增错误。
+3. 验证真实文字、图片、文件和视频的接收与发送。
+4. 验证混合 Web/微信任务、工具审批和追问的归属及 Web 回退。
+5. 验证上下文过期、未知提交、观察超时和发送中断时的手机提示及 Web 任务状态。
 
-A matching API contract and a passing mocked suite do not establish live activation or phone rendering. This public package was not installed alongside the currently enabled local package because both own the same route and store. Existing local prototype phone tests do not count as acceptance of 0.3.0 changes.
-
-Before treating this preview as production-ready, manually verify:
-
-1. Clean-profile installation into DSH Web 0.2.0-rc.2, QR binding, stop/start, restart and logout.
-2. Light/dark settings rendering and client console without slot crashes.
-3. Real text/image/file/video reception and delivery, including empty files and malformed attachments.
-4. Concurrent Web/WeChat tasks and approval fallback with PTC/nested calls.
-5. Context expiry, long tasks, network loss after possible send acceptance and long-running storage growth.
-6. Other supported operating systems before widening the environment claims.
-
-CI outcomes are available in GitHub Actions; workflow configuration is not evidence that an unobserved run passed.
+模拟测试通过不代表真实微信送达或浏览器验收通过。CI 配置也不代表未观察的运行已成功。

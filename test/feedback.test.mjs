@@ -96,7 +96,7 @@ test('upgrade cancels legacy queued receipts but preserves final replies', async
   await f.bridge.start();
   await until(() => f.sends.length === 1);
   assert.equal(f.sends[0].text, 'final reply');
-  assert.ok(f.store.snapshot().seen.includes('\0outbox\0wechat-received-old'));
+  assert.ok(f.store.snapshot().seen.includes('\0outbox-failed\0wechat-received-old'));
 });
 
 test('typing starts while prompt submission is still pending', async t => {
@@ -116,8 +116,9 @@ test('preparation failure reports not submitted and retires typing without model
   await f.bridge.start(); f.push(message('preparation', 'work'));
   await until(() => f.sends.some(x => x.text.includes('尚未提交')));
   assert.equal(f.calls.length, 0);
-  assert.equal(f.store.snapshot().inbox[0].status, 'failed');
-  assert.equal(f.store.snapshot().inbox[0].failure.stage, 'prepare');
+  assert.deepEqual(f.store.snapshot().inbox, []);
+  assert.ok(f.store.snapshot().seen.includes('preparation'));
+  assert.match(f.sends[0].text, /已丢弃/);
   assert.ok(f.typing.includes(true));
   assert.equal(f.typing.at(-1), false);
   assert.equal(f.sends.length, 1);

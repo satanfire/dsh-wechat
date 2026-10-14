@@ -183,3 +183,18 @@ test('mixed or ended WeChat turns cannot send media', async () => {
     assert.equal(f.saved.length, 0);
   }
 });
+
+
+test('failed media call returns failed without reading or saving the attachment again', async () => {
+  const f = fixture();
+  await f.enabled();
+  const first = await f.execute();
+  f.state.outbox.splice(0);
+  f.state.seen.push(`\0outbox-failed\0${first.id}`);
+  const repeated = await f.execute();
+  assert.equal(repeated.id, first.id);
+  assert.equal(repeated.status, 'failed');
+  assert.equal(f.reads.length, 1);
+  assert.equal(f.saved.length, 1);
+  assert.deepEqual(f.state.outbox, []);
+});

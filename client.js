@@ -10,7 +10,7 @@ window.__ModuleLoader__.load({
         nav: 'WeChat', title: 'WeChat', status: 'Connection', connected: 'Connected',
         connecting: 'Connecting…',
         disconnected: 'Disconnected', enabled: 'Running', stopped: 'Stopped',
-        session: 'Session', outbox: 'Unsent', uncertain: 'Delivery unclear',
+        session: 'Session',
         login: 'Scan to connect', start: 'Start', stop: 'Stop', logout: 'Log out',
         bound: 'Account bound. Select Start to connect.',
         confirmLogout: 'Log out and discard unsent or unprocessed WeChat messages?',
@@ -22,7 +22,7 @@ window.__ModuleLoader__.load({
         nav: '微信', title: '微信', status: '连接状态', connected: '已连接',
         connecting: '连接中…',
         disconnected: '未连接', enabled: '运行中', stopped: '已停止',
-        session: '会话', outbox: '待发送', uncertain: '发送状态待确认',
+        session: '会话',
         login: '扫码连接', start: '启动', stop: '停止', logout: '退出登录',
         bound: '已绑定微信账号，点击启动以连接。',
         confirmLogout: '退出登录并清空待处理、待发送的微信消息？',
@@ -136,9 +136,7 @@ window.__ModuleLoader__.load({
             row(t('status'), status.connected ? t('connected') : status.enabled ? t('connecting') : t('disconnected'),
               status.connected ? 'dsh-wechat-connected' : ''),
             row(t('enabled'), status.enabled ? t('enabled') : t('stopped')),
-            status.sessionId && row(t('session'), status.sessionId),
-            row(t('outbox'), String(status.outboxDepth ?? 0)),
-            row(t('uncertain'), String(status.uncertainCount ?? 0)))
+            status.sessionId && row(t('session'), status.sessionId))
             : h('p', { className: 'dsh-wechat-muted' }, t('loading')),
           h('div', { className: 'dsh-wechat-actions' },
             button('login', !status || !!status.bound),

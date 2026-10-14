@@ -7,7 +7,7 @@ function setup() {
   let route;
   let disposed = false;
   const controller = {
-    async status() { return { connected: false, enabled: false, queueDepth: 0, outboxDepth: 0, login: { status: 'idle' } }; },
+    async status() { return { connected: false, enabled: false, queueDepth: 0, login: { status: 'idle' } }; },
     async action(name) { calls.push(name); },
   };
   const ctx = { connection: { fetch: { register(next) { route = next; return () => { disposed = true; }; } } } };

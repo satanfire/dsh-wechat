@@ -1,21 +1,22 @@
-# Release review — 0.3.0
+# v0.4.0 发布审查
 
-The local 0.2.2 prototype was reviewed before creating the public package. The public version differs intentionally; the installed local prototype was not modified by this release preparation.
+本文记录 v0.4.0 的行为。代码审查已完成，发现的停止清理写入失败后无法重试问题已修复。144 项回归、代码检查及真实发布包检查通过。浏览器实显和真实微信验收尚未完成。
 
-| Finding | Public-version handling | Regression evidence |
-| --- | --- | --- |
-| Failed/ambiguous inbound work lost its original record | Retain payload and request linkage; no uncertain replay; offline retry only for known preparation failure | Bridge, store and recovery tests |
-| Observation timeout dropped an active task | Keep submitted tracking and continue observing; explicit offline hold for stalled work | Eventual-reply and recovery tests |
-| Uncertain network sends retried possible acceptance | Stop on the first uncertain result; retry only known nonacceptance | Text and final media-send tests |
-| Session-level ownership could include unrelated Web calls | Require durable admitted request/turn correlation and exact tool call; mixed/ended/pending turns fail closed | Media and interaction ownership tests |
-| Phone approval omitted concrete arguments | Include exact short arguments; missing/oversized/unverified call falls back to Web | Approval-detail/fallback tests |
-| Manual versioned build made generic distribution fragile | Load portable source entry; package check expands actual tarball and imports Host modules | Manifest and package verification scripts |
-| License/compatibility/install documentation incomplete | MIT license and notices, exact Harness peer declaration, Node engine, bilingual docs, CI | Manifest/metadata checks |
-| Transient media preparation failure discarded attachments | Retain retryable preparation record; only known invalid/oversized media is terminal | Temporary-media failure test |
-| Definite text rejection mislabeled uncertain and blocked suffix | Mark definite failure and cancel unsent chunks from that reply | Multipart failure test |
+| 审查项 | v0.4.0 预期行为 |
+| --- | --- |
+| 设置页 | 移除“待发送”“发送状态待确认”行及计数 |
+| 入站失败 | 删除记录，不重试；不保留正文，仅保留去重 ID |
+| 提交结果未知 | 不重新提交；提示状态不明、已丢弃，可在 Web 查看 |
+| 观察等待超时 | 丢弃跟踪，提示到 Web 查看；不取消 DSH 任务，不再自动转发该任务回复 |
+| 正常重启 | 已明确提交的任务继续观察，不重新提交；`queued` 未发送任务可恢复 |
+| 中断及遗留状态 | 删除中断的 `sending` 及遗留失败、`uncertain`、`control-pending` 记录，仅保留去重 ID |
+| 出站失败或结果不明 | 丢弃正文和同一回复尚未发送的后续段；其他消息继续处理 |
+| 网络重试 | iLink 层仅保留已知未接受请求的有限重试 |
+| 去重边界 | 最多最近 10,000 个 ID；非常旧的重放可能无法识别 |
+| 升级清理 | 打开存储时自动清理旧失败记录；绑定、游标和会话不变 |
+| 工具结果 | `queued` 不等于送达；`sent` 仅表示服务接受；失败去重结果不误报 `sent` |
+| 恢复入口 | 不再提供 `scripts/recover.mjs` 及对应测试 |
 
-The prototype's distribution artifact did exist and matched source at review time; the release issue was dependence on a manually generated versioned path, not a missing working artifact. Missing peer dependencies also did not reject installation: they allowed unknown compatibility, now constrained explicitly.
+丢弃消息不删除 DSH 会话日志。活动记录仍可能含敏感正文及上下文。插件不构成 Host 代码沙箱，平台去重也不构成 exactly-once 保证。
 
-Authentication review found no concrete bypass in the existing shared Connection route; this was source/API inspection, not a live authentication penetration test. File/turn checks narrow known races but do not make the plugin a sandbox against malicious Host code or a hostile process racing the filesystem.
-
-No live WeChat acceptance was performed for this public version. See [verification.md](verification.md) for remaining manual checks. Passing local tests and tarball checks justify a public preview, not production or cross-version guarantees.
+后续验证见 [verification.md](verification.md)。

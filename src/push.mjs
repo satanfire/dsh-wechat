@@ -26,13 +26,14 @@ export function enqueuePush(state, { id, text, sessionId, signal }) {
     }
     return { id, status: previous.status };
   }
+  if (state.seen.includes(`\u0000outbox-failed\u0000${id}`)) return { id, status: 'failed' };
   if (state.seen.includes(`\u0000outbox\u0000${id}`)) return { id, status: 'sent' };
   const context = state.binding.context;
   if (!isContextToken(context?.token)) {
     throw new Error('缺少可用微信上下文，请先在手机给机器人发一条消息后再推送。');
   }
   if (state.outbox.filter(row => row.id.startsWith('wechat-push-')).length >= MAX_PUSH_QUEUE) {
-    throw new Error('微信推送队列已满，请先在 DSH 核查未发送或状态不确定的消息。');
+    throw new Error('微信推送队列已满，请稍后再发送。');
   }
   state.outbox.push({ id, text, status: 'queued', userId: ownerId,
     contextToken: context.token, sourceSessionId: sessionId });
@@ -42,7 +43,7 @@ export function enqueuePush(state, { id, text, sessionId, signal }) {
 export function sendTextDefinition(controller) {
   return {
     name: 'wechat_send_text',
-    description: 'Queue text for the user’s bound WeChat from this session. Use only when the user requests a WeChat message or notification. Returns the message id and delivery state; queued means not yet delivered.',
+    description: '向用户绑定的微信发送文字通知，仅在用户要求微信消息或通知时使用。返回消息 ID 和状态；queued 表示等待发送，失败消息会丢弃且不会自动重发。',
     parameters: {
       type: 'object',
       properties: { text: { type: 'string', description: 'Message to send, 1–800 characters. For composed notifications use a short title, blank lines, short paragraphs and • bullets; WeChat does not render Markdown headings, bold or tables. Preserve user-supplied verbatim text. Split longer messages at paragraph boundaries.' } },
@@ -50,7 +51,7 @@ export function sendTextDefinition(controller) {
     },
     output: {
       schema: { type: 'object', properties: {
-        id: { type: 'string' }, status: { type: 'string', enum: ['queued', 'sending', 'sent', 'failed', 'uncertain'] },
+        id: { type: 'string' }, status: { type: 'string', enum: ['queued', 'sending', 'sent', 'failed'] },
       }, required: ['id', 'status'], additionalProperties: false },
       render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
     },

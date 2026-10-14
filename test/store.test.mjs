@@ -257,8 +257,9 @@ test('outbox deduplicates IDs and copies caller entries', async (t) => {
   });
   await store.close();
   const reopened = await Store.open(directory);
-  assert.equal(reopened.snapshot().outbox[0].status, 'sending');
-  assert.equal(reopened.snapshot().outbox[0].requestId, 'request-1');
+  assert.deepEqual(reopened.snapshot().outbox, []);
+  assert.ok(reopened.snapshot().seen.includes('\0outbox-failed\0reply-1'));
+  assert.equal(await reopened.enqueue(entry), false);
   await reopened.close();
 });
 
@@ -281,16 +282,18 @@ test('terminal entries are pruned while completed IDs remain deduplicated', asyn
     state.outbox[0].status = 'sent';
     state.outbox[1].status = 'uncertain';
   });
-  assert.deepEqual(store.snapshot().outbox.map((item) => item.id), ['review-id']);
+  assert.deepEqual(store.snapshot().outbox, []);
+  assert.ok(store.snapshot().seen.includes('\0outbox-failed\0review-id'));
   await store.close();
   const reopened = await Store.open(directory);
   assert.equal(await reopened.ingest([initial[0]], 'third', 'owner'), 0);
   assert.equal(await reopened.enqueue({ id: 'sent-id', userId: 'owner', contextToken: '', text: 'duplicate' }), false);
-  assert.deepEqual(reopened.snapshot().outbox.map((item) => item.id), ['review-id']);
+  assert.deepEqual(reopened.snapshot().outbox, []);
+  assert.equal(await reopened.enqueue({ id: 'review-id', userId: 'owner', contextToken: '', text: 'retry' }), false);
   await reopened.close();
 });
 
-test('legacy failed inbox records survive reopen without replaying their IDs', async (t) => {
+test('legacy failed inbox payloads are removed on reopen without replaying their IDs', async (t) => {
   const directory = await fixture(t);
   const store = await Store.open(directory);
   await store.ingest([textMessage('failed'), textMessage('uncertain'), textMessage('active')], 'cursor', 'owner');
@@ -303,19 +306,19 @@ test('legacy failed inbox records survive reopen without replaying their IDs', a
   previous.inbox[2].contextToken = '';
   await fs.writeFile(filename, `${JSON.stringify(previous)}\n`);
   const reopened = await Store.open(directory);
-  assert.deepEqual(reopened.snapshot().inbox.map(item => item.id), ['failed', 'uncertain', 'active']);
+  assert.deepEqual(reopened.snapshot().inbox.map(item => item.id), ['active']);
   assert.deepEqual(JSON.parse(await fs.readFile(filename, 'utf8')).inbox, reopened.snapshot().inbox);
   assert.equal(await reopened.ingest([textMessage('failed'), textMessage('uncertain')], 'replayed', 'owner'), 0);
-  assert.deepEqual(reopened.snapshot().inbox.map(item => item.id), ['failed', 'uncertain', 'active']);
+  assert.deepEqual(reopened.snapshot().inbox.map(item => item.id), ['active']);
   await reopened.close();
 });
 
-test('new failed inbox records retain original payload and seen IDs', async (t) => {
+test('new failed inbox records discard payload and retain seen IDs', async (t) => {
   const directory = await fixture(t);
   const store = await Store.open(directory);
   await store.ingest([textMessage('failed'), textMessage('uncertain')], 'cursor', 'owner');
   await store.update(state => { state.inbox[0].status = 'failed'; state.inbox[1].status = 'needs-review'; });
-  assert.deepEqual(store.snapshot().inbox.map(item => item.status), ['failed', 'needs-review']);
+  assert.deepEqual(store.snapshot().inbox, []);
   assert.deepEqual(store.snapshot().seen, ['failed', 'uncertain']);
   await store.close();
 });
@@ -392,4 +395,68 @@ test('live owner is protected and a crashed owner is recovered without losing qu
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
   }
+});
+
+
+test('reopen removes legacy terminal payloads and grouped suffix while preserving recovery state', async t => {
+  const directory = await fixture(t);
+  const store = await Store.open(directory);
+  await store.close();
+  const filename = path.join(directory, 'store.json');
+  const state = JSON.parse(await fs.readFile(filename, 'utf8'));
+  state.enabled = true;
+  state.sessionId = 'saved-session';
+  state.cursor = 'saved-cursor';
+  state.binding = {ownerId:'owner', botId:'bot', context:{token:'saved-token',receivedAt:123}};
+  const terminal = ['done', 'cancelled', 'failed', 'needs-review', 'control-pending'];
+  state.inbox = [...terminal, 'queued', 'dispatching', 'submitted'].map(status => ({
+    id:status, status, userId:'owner', contextToken:'ctx', text:`private-${status}`,
+    sessionId:'saved-session', requestId:`wechat-${status}`,
+  }));
+  state.outbox = ['sent', 'failed', 'uncertain', 'cancelled', 'sending'].flatMap(status => [
+    {id:`wechat-reply-${status}-0`,status,text:`private-${status}`},
+    {id:`wechat-reply-${status}-1`,status:'queued',text:`suffix-${status}`},
+  ]);
+  state.outbox.push({id:'independent',status:'queued',text:'keep'});
+  await fs.writeFile(filename, JSON.stringify(state));
+  const reopened = await Store.open(directory);
+  try {
+    const clean = reopened.snapshot();
+    assert.deepEqual(clean.inbox.map(item => item.status), ['queued', 'dispatching', 'submitted']);
+    assert.deepEqual(clean.outbox.map(item => item.id), ['wechat-reply-sent-1', 'independent']);
+    assert.deepEqual(clean.binding, state.binding);
+    assert.equal(clean.sessionId, state.sessionId);
+    assert.equal(clean.cursor, state.cursor);
+    assert.equal(clean.enabled, true);
+    for (const id of terminal) assert.ok(clean.seen.includes(id));
+    assert.ok(clean.seen.includes('\0outbox\0wechat-reply-sent-0'));
+    for (const status of ['failed', 'uncertain', 'cancelled', 'sending']) {
+      for (const index of [0, 1]) {
+        const id = `wechat-reply-${status}-${index}`;
+        assert.ok(clean.seen.includes(`\0outbox-failed\0${id}`));
+        assert.equal(await reopened.enqueue({id,userId:'owner',contextToken:'ctx',text:'must not replay'}), false);
+      }
+    }
+    assert.deepEqual(JSON.parse(await fs.readFile(filename, 'utf8')), clean);
+  } finally { await reopened.close(); }
+});
+
+test('dedup retains the most recent 10000 IDs across compaction and reopen', async t => {
+  const directory = await fixture(t);
+  const store = await Store.open(directory);
+  for (let batch = 0; batch < 11; batch++) {
+    await store.ingest(Array.from({length:1000}, (_, index) => textMessage(`id-${batch * 1000 + index}`)), `cursor-${batch}`, 'owner');
+    await store.update(state => { for (const item of state.inbox) item.status = 'done'; });
+  }
+  assert.equal(store.snapshot().seen.length, 10000);
+  assert.equal(store.snapshot().seen[0], 'id-1000');
+  assert.equal(store.snapshot().seen.at(-1), 'id-10999');
+  await store.close();
+  const reopened = await Store.open(directory);
+  try {
+    assert.equal(await reopened.ingest([textMessage('id-1000'), textMessage('id-10999')], 'duplicates', 'owner'), 0);
+    assert.equal(await reopened.ingest([textMessage('id-0')], 'expired-id', 'owner'), 1);
+    assert.equal(reopened.snapshot().seen.length, 10000);
+    assert.equal(reopened.snapshot().seen.at(-1), 'id-0');
+  } finally { await reopened.close(); }
 });

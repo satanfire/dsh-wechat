@@ -42,15 +42,15 @@ test('a Web-origin push is delivered by the existing worker without model admiss
 });
 
 for(const uncertain of [true,false]) {
-  test(`push failure is ${uncertain?'uncertain':'failed'} and never automatically repeated`,async t=>{
+  test(`push failure (uncertain=${uncertain}) is discarded and never automatically repeated`,async t=>{
     let sends=0;
     const f=await fixture(t,async()=>{sends++;throw Object.assign(new Error('provider failure'),{uncertain});});
     const result=await f.controller.enqueueText('test',{sessionId:'web-session',callId:'failure'});
-    await until(()=>f.store.snapshot().outbox[0]?.status===(uncertain?'uncertain':'failed'));
+    await until(()=>f.store.snapshot().seen.includes(`\0outbox-failed\0${result.id}`));
     await f.bridge.stop();await f.bridge.start();
     await new Promise(resolve=>setTimeout(resolve,80));
     assert.equal(sends,1);
-    assert.equal((await f.controller.enqueueText('test',{sessionId:'web-session',callId:'failure'})).status,uncertain?'uncertain':'failed');
-    assert.equal(f.store.snapshot().outbox[0].id,result.id);assert.equal(f.modelCalls,0);
+    assert.equal((await f.controller.enqueueText('test',{sessionId:'web-session',callId:'failure'})).status,'failed');
+    assert.deepEqual(f.store.snapshot().outbox,[]);assert.equal(f.modelCalls,0);
   });
 }

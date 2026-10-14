@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { basename } from 'node:path';
 import { inspectOwnedToolCall } from './ownership.mjs';
+import { outboxSeenId, outboxFailedId } from './store.mjs';
 
 const MAX_BYTES = 50 * 1024 * 1024;
 const KINDS = ['image', 'file', 'video'];
@@ -63,7 +64,7 @@ export async function enableOutbound(ctx, { store, cwd, sessionId, requestId }) 
   }
   const definition = {
     name: 'wechat_send_media',
-    description: 'Queue a workspace image, file, or video for the current WeChat conversation. Returns the queue id; delivery may remain pending or uncertain.',
+    description: '向当前微信会话发送工作区中的图片、文件或视频。返回消息 ID 和状态；queued 表示等待发送，失败消息会丢弃且不会自动重发。',
     parameters: {
       type: 'object',
       properties: {
@@ -94,8 +95,9 @@ export async function enableOutbound(ctx, { store, cwd, sessionId, requestId }) 
       }
       const id = messageId(sessionId, exec.callId);
       const previous = store.snapshot();
+      if (previous.seen.includes(outboxFailedId(id))) return { id, status: 'failed' };
       if (previous.outbox.some((row) => row.id === id)
-        || previous.seen.includes(`\0outbox\0${id}`)) {
+        || previous.seen.includes(outboxSeenId(id))) {
         return { id, status: 'already-queued' };
       }
 
@@ -125,13 +127,14 @@ export async function enableOutbound(ctx, { store, cwd, sessionId, requestId }) 
         const row = activeOwner(state, sessionId, requestId);
         if (!row) throw new Error('WeChat task ended before queuing media');
         if (state.outbox.some((item) => item.id === id)
-          || state.seen.includes(`\0outbox\0${id}`)) return;
+          || state.seen.includes(outboxSeenId(id)) || state.seen.includes(outboxFailedId(id))) return;
         state.outbox.push({ id, status: 'queued', text: '',
           userId: row.userId, contextToken: row.contextToken,
           media: { kind: args.kind, name, attachment } });
         queued = true;
       });
-      return { id, status: queued ? 'queued' : 'already-queued' };
+      return { id, status: queued ? 'queued'
+        : store.snapshot().seen.includes(outboxFailedId(id)) ? 'failed' : 'already-queued' };
     },
   };
   // agent.ctx owns its registration. The returned disposer also lets the

@@ -63,8 +63,6 @@ export class Controller {
   status() {
     const s = this.store.snapshot();
     return { connected: !!this.bridge?.connected, enabled: s.enabled, sessionId: s.sessionId,
-      outboxDepth: s.outbox.length,
-      uncertainCount: s.outbox.filter(x => ['failed', 'uncertain'].includes(x.status)).length,
       error: this.error || this.bridge?.error || null, login: this.login, bound: !!s.binding };
   }
 

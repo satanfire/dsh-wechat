@@ -49,7 +49,7 @@ Phone approvals include the actual tool arguments and verify durable WeChat requ
 - Files/videos: 50 MiB each and combined per message, at most eight attachments. Videos enter as files, not model video frames.
 - `wechat_send_media({path,kind})` sends a workspace attachment from a verified WeChat turn. External paths and escaping symlinks are refused. Videos are delivered as file attachments.
 - Ask any ordinary Harness session to notify your WeChat when done. It loads `load_wechat_tools({})`, then uses its scoped `wechat_send_text({text})`. Text is 1–800 Unicode characters; the recipient is always the bound owner.
-- `queued` means persisted, `sent` means accepted by the provider, `failed` means definite failure, and `uncertain` means acceptance cannot be established. None means the phone user read it.
+- `queued` 仅表示已落盘，不等于送达。`sent` 仅表示微信服务接受，不代表手机已读。`failed` 表示消息已丢弃，可能是明确失败或结果不明；失败消息的去重结果不会误报为 `sent`。
 
 Push uses the latest owner conversation context. Send the bot a fresh phone message when context is missing or expired; indefinite offline proactive delivery is not promised. WeChat text does not render Markdown headings, bold, or tables.
 
@@ -66,26 +66,23 @@ New sessions default to the Harness process startup directory and the `standard`
 
 Use an existing absolute Host directory and an installed preset ID. Configuration is replaced wholesale, not merged. Restart after changes. Do not commit private paths or credentials.
 
-## Durability and recovery
+## 持久化与故障处理
 
-Incoming batches and cursors commit atomically. Stable message/request IDs prevent duplicate admission. Restart reconciles dispatching work with the durable Harness log; submitted work resumes observation. Observation timeouts retain submitted work and continue waiting.
+设置页显示连接、运行状态和当前会话。不再显示“待发送”“发送状态待确认”行及计数。
 
-Preparation failures and ambiguous submissions retain recovery records. They are never automatically replayed. Ambiguous network errors, timeouts, HTTP 5xx, or invalid send responses stop delivery retries immediately; only known nonacceptance can receive bounded retries. Provider `client_id` deduplication has not been proven on real devices, so exactly-once delivery is not promised.
+收件批次与游标原子保存。最多保留最近 10,000 个去重 ID；超出后可能无法识别非常旧的重放。已明确提交的任务正常重启后继续观察，不重新提交。`queued` 中尚未发送的任务可在正常重启后恢复。
 
-State lives under `$DSH_HOME/storages/dsh-wechat/PROFILE/`, defaulting to the user's `.dsh` directory. It includes messages, context tokens, media descriptors, and request linkage. New POSIX directories use 0700, state files use 0600. Login tokens are held by Harness credentials and never returned by the management route. The inbox is capped at 1,000 records; failed records count toward this limit, and dedup IDs grow over time. This is not a high-throughput or multi-tenant service.
+入站收件失败即删除，不重试。失败或结果不明的入站、出站消息不保留正文，仅保留去重 ID。提交结果未知时不重提，提示“状态不明，已丢弃，可在 Web 查看”。观察等待超时也丢弃跟踪，并提示到 Web 查看。这不会取消 DSH 任务，也不再自动转发该任务回复。
 
-For local recovery, first exit the Harness process using the profile; the Settings Stop button alone does not release its storage lock:
+同一分段回复中，某段失败或结果不明时，丢弃尚未发送的后续段，其他消息继续处理。iLink 层仅对已知未接受的网络请求保留有限重试。平台 `client_id` 去重尚未实机证明，不承诺 exactly-once。
 
-```sh
-node scripts/recover.mjs --profile web list
-node scripts/recover.mjs --profile web retry MESSAGE_ID
-node scripts/recover.mjs --profile web discard MESSAGE_ID
-node scripts/recover.mjs --profile web hold MESSAGE_ID
-```
+存储打开时自动清理旧失败记录。重启时删除中断的 `sending` 及遗留的失败、`uncertain`、`control-pending` 记录，仅保留去重 ID。清理不改变绑定、游标和会话。收件队列最多 1,000 条，不适合高吞吐或多租户服务。
 
-The offline script lists only IDs/status/session linkage. Retry is allowed only for known preparation/session-creation failures; uncertain submissions cannot be replayed. Discard removes a failed inbound record but preserves its dedup ID and does not cancel a Harness task. Review the Web session first. A verified stalled tracked request can be put on `hold` offline to free the queue after restart; this does not cancel the Harness task and stops automatic reply forwarding for it. Uncertain outbound messages have no resend shortcut.
+状态位于 `$DSH_HOME/storages/dsh-wechat/PROFILE/`，默认使用用户主目录下的 `.dsh`。活动记录仍可能包含正文、上下文、媒体描述和任务关联，属于敏感数据。新增 POSIX 目录使用 0700，文件使用 0600。登录 token 保存在 DSH credentials，管理接口不返回 token。
 
-Stop affects bridge polling and waiting, not admitted Harness tasks. Use `/stop` or Web cancellation for tasks. Log out clears bridge credentials/binding/queues but preserves Harness session history. Never delete a live process's storage lock.
+先在 Web 对应会话核对不确定任务，避免手动重发已执行的操作。丢弃的正文不能从插件恢复。v0.4.0 不再提供离线恢复脚本 `scripts/recover.mjs`。
+
+“停止”仅停止桥接轮询与等待，不取消已提交的 DSH 任务。取消任务请用 `/stop` 或 Web。“退出登录”清除插件凭据、绑定和队列，保留 DSH 会话日志。不要删除存活进程的存储锁。
 
 ## Upgrade, development, and scope
 

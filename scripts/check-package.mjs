@@ -17,7 +17,7 @@ function command(executable, args, cwd) {
 try {
   const [packed] = JSON.parse(command(npm, ['pack', '--ignore-scripts', '--json', '--pack-destination', temporary], root));
   const paths = packed.files.map(file => file.path);
-  for (const required of ['index.mjs', 'client.js', 'src/ownership.mjs', 'src/bridge.mjs', 'cordis.patch.yml', 'LICENSE', 'README.md', 'locale/en.json', 'scripts/recover.mjs', 'docs/verification.md', 'vendor/qrcode.cjs', 'vendor/licenses.txt', 'vendor/manifest.json']) {
+  for (const required of ['index.mjs', 'client.js', 'src/ownership.mjs', 'src/bridge.mjs', 'cordis.patch.yml', 'LICENSE', 'README.md', 'locale/en.json', 'icon.svg', 'docs/verification.md', 'vendor/qrcode.cjs', 'vendor/licenses.txt', 'vendor/manifest.json']) {
     assert.ok(paths.includes(required), required);
   }
   for (const entry of paths) {
