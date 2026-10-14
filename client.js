@@ -161,6 +161,42 @@ window.__ModuleLoader__.load({
           const offZh = ctx.locale.register(NS, 'zh', COPY.zh);
           return () => { offZh(); offEn(); };
         });
+        // DSH 0.2.0-rc.2 has no settings.section icon option. Keep this
+        // compatibility shim scoped to the settings dialog and our nav label.
+        ctx.effect(() => {
+          const marker = 'dsh-wechat-nav-message';
+          const style = document.createElement('style');
+          const glyph = encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z"/></svg>');
+          const selector = `[data-shortcut-modal="settings"] nav button.${marker}`;
+          style.textContent = `${selector} > svg { display: none; }
+            ${selector}::before { content: ''; display: block; width: 16px; height: 16px; flex: 0 0 16px; background: currentColor; mask: url("data:image/svg+xml,${glyph}") center / contain no-repeat; -webkit-mask: url("data:image/svg+xml,${glyph}") center / contain no-repeat; }`;
+          document.head.appendChild(style);
+          const marked = new Set();
+          const update = () => {
+            const label = ctx.locale.bind(NS)('nav');
+            const matches = new Set();
+            for (const button of document.querySelectorAll('[data-shortcut-modal="settings"] nav button')) {
+              const children = Array.from(button.children);
+              if (children.find(child => child.localName === 'span')?.textContent?.trim() !== label
+                || !children.some(child => child.localName === 'svg')) continue;
+              button.classList.add(marker);
+              matches.add(button);
+            }
+            for (const button of marked) if (!matches.has(button)) button.classList.remove(marker);
+            marked.clear();
+            for (const button of matches) marked.add(button);
+          };
+          const observer = new MutationObserver(update);
+          observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+          const offLocale = ctx.locale.subscribe(update);
+          update();
+          return () => {
+            observer.disconnect();
+            offLocale();
+            for (const button of marked) button.classList.remove(marker);
+            style.remove();
+          };
+        });
         ctx.slots.inject('settings.section', () => ctx.slots.register({
           name: 'settings.section', id: 'dsh-wechat', order: 90,
           label: () => ctx.locale.bind(NS)('nav'),
