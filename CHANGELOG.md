@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.2 — 2026-10-14
+
+- 插件管理卡片改用消息气泡图标。
+
 ## 0.3.1 — 2026-10-14
 
 - Prebundle QR PNG generation and its three MIT-licensed libraries; no external runtime dependencies.
