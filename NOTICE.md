@@ -1,0 +1,16 @@
+# Notices and provenance
+
+This repository's own implementation is licensed under the MIT License in [LICENSE](LICENSE), Copyright (c) 2026 ping.
+
+The iLink wire field names and observed login/media flows were informed by:
+
+- [CodeByZack/dsh-weixin](https://github.com/CodeByZack/dsh-weixin), version 0.1.5, a community MIT-licensed protocol reference.
+- A local pi-wechat-assistant derivative used during the original prototype's protocol investigation. This repository does not redistribute that derivative, its login files, credentials, or stored conversations.
+
+The reference acknowledgements describe protocol research, not an endorsement or platform authorization. The persistence, lifecycle, Harness adapter, settings UI, and delivery implementation are maintained here. No upstream source license is replaced by this repository's license. If future changes copy implementation code, retain the upstream copyright and license notices with those files.
+
+Runtime dependency:
+
+- [node-qrcode](https://github.com/soldair/node-qrcode), `qrcode` 1.5.4, MIT. Its dependencies retain their own license notices through npm; dependency source is not vendored in Git.
+
+[DeepSeek Harness](https://www.npmjs.com/package/@deepseek-ai/dsh) is a separate host runtime. React is supplied by its client module table rather than bundled by this plugin. WeChat, Tencent, DeepSeek, and other names belong to their respective owners.

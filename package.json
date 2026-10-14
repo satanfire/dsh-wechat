@@ -1,0 +1,34 @@
+{
+  "name": "@satanfire/dsh-wechat",
+  "version": "0.3.0",
+  "description": "Owner-bound WeChat iLink bridge for DeepSeek Harness Web",
+  "type": "module",
+  "license": "MIT",
+  "author": "satanfire",
+  "repository": { "type": "git", "url": "git+https://github.com/satanfire/dsh-wechat.git" },
+  "homepage": "https://github.com/satanfire/dsh-wechat#readme",
+  "bugs": { "url": "https://github.com/satanfire/dsh-wechat/issues" },
+  "keywords": ["deepseek-harness", "dsh", "wechat", "weixin", "ilink", "cordis"],
+  "engines": { "node": ">=22" },
+  "exports": {
+    ".": "./index.mjs",
+    "./host": "./index.mjs",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": ["index.mjs", "src", "scripts/recover.mjs", "docs/verification.md", "client.js", "locale", "cordis.patch.yml", "README.md", "README.en.md", "LICENSE", "NOTICE.md", "SECURITY.md", "CHANGELOG.md"],
+  "scripts": {
+    "check": "node scripts/check.mjs",
+    "test": "node --test",
+    "check:package": "node scripts/check-package.mjs"
+  },
+  "dependencies": { "qrcode": "1.5.4" },
+  "peerDependencies": { "@deepseek-ai/dsh": "0.2.0-rc.2" },
+  "peerDependenciesMeta": { "@deepseek-ai/dsh": { "optional": true } },
+  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": { "platform": "web", "immediately": true, "inject": ["@deepseek-ai/dsh-client-ui-settings"] }
+  }
+}
