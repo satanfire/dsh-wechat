@@ -11,7 +11,6 @@ Requires **`@deepseek-ai/dsh 0.2.0-rc.2`** with Web services and a configured mo
 ```sh
 git clone https://github.com/satanfire/dsh-wechat.git
 cd dsh-wechat
-npm ci --ignore-scripts
 dsh plugin --profile web add "$PWD"
 ```
 
@@ -21,7 +20,7 @@ Alternatively, enter the clone's absolute path in the Harness plugin manager, or
 dsh plugin --profile web add github:satanfire/dsh-wechat
 ```
 
-No build step is required. After installation, restart the existing Harness Web process and refresh its page. Install from GitHub or a local directory; the package is not yet published to npm.
+QR dependencies are prebundled inside the plugin. Installation needs no external runtime dependencies, build step, or install scripts. After installation, restart the existing Harness Web process and refresh its page. Install from GitHub or a local directory; the package is not yet published to npm.
 
 Do not run multiple WeChat bridges using the same bot account.
 
@@ -90,10 +89,11 @@ Stop affects bridge polling and waiting, not admitted Harness tasks. Use `/stop`
 
 ## Upgrade, development, and scope
 
-For a local clone, stop Harness, `git pull --ff-only`, run `npm ci --ignore-scripts`, then restart. For a GitHub package, update/reinstall through plugin management and restart. Uninstall with `dsh plugin --profile web remove @satanfire/dsh-wechat`; unlinking the package does not erase credentials or local state. Log out before uninstalling to clear them.
+For a local clone, stop Harness, `git pull --ff-only`, then restart. For a GitHub package, update/reinstall through plugin management and restart. Uninstall with `dsh plugin --profile web remove @satanfire/dsh-wechat`; unlinking the package does not erase credentials or local state. Log out before uninstalling to clear them.
 
 ```sh
 npm ci --ignore-scripts
+npm run build:vendor
 npm run check
 npm test
 npm run check:package

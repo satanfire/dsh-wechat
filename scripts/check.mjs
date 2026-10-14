@@ -25,8 +25,8 @@ for (const name of ['LICENSE', 'README.md', 'README.en.md', 'NOTICE.md', 'SECURI
 }
 for (const language of ['en', 'zh']) assert.ok((await json(`locale/${language}.json`)).meta.title);
 const files = ['index.mjs', 'client.js'];
-for (const folder of ['src', 'scripts', 'test']) {
-  for (const name of await readdir(path.join(root, folder))) if (/\.(mjs|js)$/.test(name)) files.push(`${folder}/${name}`);
+for (const folder of ['src', 'scripts', 'test', 'vendor']) {
+  for (const name of await readdir(path.join(root, folder))) if (/\.(mjs|cjs|js)$/.test(name)) files.push(`${folder}/${name}`);
 }
 for (const file of files) {
   const result = spawnSync(process.execPath, ['--check', path.join(root, file)], { encoding: 'utf8', timeout: 10000 });

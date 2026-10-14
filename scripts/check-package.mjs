@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
@@ -17,7 +17,7 @@ function command(executable, args, cwd) {
 try {
   const [packed] = JSON.parse(command(npm, ['pack', '--ignore-scripts', '--json', '--pack-destination', temporary], root));
   const paths = packed.files.map(file => file.path);
-  for (const required of ['index.mjs', 'client.js', 'src/ownership.mjs', 'src/bridge.mjs', 'cordis.patch.yml', 'LICENSE', 'README.md', 'locale/en.json', 'scripts/recover.mjs', 'docs/verification.md']) {
+  for (const required of ['index.mjs', 'client.js', 'src/ownership.mjs', 'src/bridge.mjs', 'cordis.patch.yml', 'LICENSE', 'README.md', 'locale/en.json', 'scripts/recover.mjs', 'docs/verification.md', 'vendor/qrcode.cjs', 'vendor/licenses.txt', 'vendor/manifest.json']) {
     assert.ok(paths.includes(required), required);
   }
   for (const entry of paths) {
@@ -32,6 +32,31 @@ try {
   for (const module of await readdir(path.join(unpacked, 'src'))) {
     if (module.endsWith('.mjs')) await import(pathToFileURL(path.join(unpacked, 'src', module)).href);
   }
+  assert.deepEqual(Object.keys(manifest.dependencies ?? {}), []);
+  assert.deepEqual(Object.keys(manifest.optionalDependencies ?? {}), []);
+  for (const name of ['preinstall', 'install', 'postinstall', 'prepare', 'prepack']) {
+    assert.equal(manifest.scripts?.[name], undefined, `Unexpected install lifecycle: ${name}`);
+  }
+  const installedRoot = path.join(temporary, 'consumer');
+  await mkdir(installedRoot);
+  await writeFile(path.join(installedRoot, 'package.json'), '{"name":"qr-package-check","private":true}');
+  command(npm, ['install', '--omit=dev', '--ignore-scripts', '--offline', '--no-audit', '--no-fund', '--package-lock=false', path.join(temporary, packed.filename)], installedRoot);
+  const topLevel = await readdir(path.join(installedRoot, 'node_modules'));
+  assert.deepEqual(topLevel.filter(name => !name.startsWith('.')), ['@satanfire']);
+  const installed = path.join(installedRoot, 'node_modules', '@satanfire', 'dsh-wechat');
+  const script = `
+    import assert from 'node:assert/strict';
+    import { pathToFileURL } from 'node:url';
+    const { Controller } = await import(pathToFileURL(${JSON.stringify(path.join(installed, 'src/controller.mjs'))}).href);
+    const controller = new Controller({}, {}, {profile:'package-check'});
+    const image = await controller.toQrDataUrl('isolated-login-test');
+    assert.ok(image.startsWith('data:image/png;base64,'));
+    const bytes = Buffer.from(image.split(',')[1], 'base64');
+    assert.equal(bytes.readUInt32BE(16), 260);
+    assert.equal(bytes.readUInt32BE(20), 260);
+    console.log('Isolated production install: only the plugin directory; login QR generated.');
+  `;
+  console.log(command(process.execPath, ['--input-type=module', '-e', script], installedRoot).trim());
   console.log(`Verified real tarball: ${paths.length} files, ${packed.size} compressed bytes; portable Host imports passed.`);
 } finally {
   const resolved = path.resolve(temporary);

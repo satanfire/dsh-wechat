@@ -17,5 +17,7 @@ test('release sources contain no personal path or custom lazy-plugin dependency'
   const patch = await fs.readFile(path.join(root, 'cordis.patch.yml'), 'utf8');
   assert.equal(/cwd\s*:/.test(patch), false);
   const manifest = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));
-  assert.deepEqual(Object.keys(manifest.dependencies), ['qrcode']);
+  assert.deepEqual(Object.keys(manifest.dependencies ?? {}), []);
+  assert.deepEqual(Object.keys(manifest.optionalDependencies ?? {}), []);
+  for (const name of ['qrcode', 'esbuild']) assert.ok(manifest.devDependencies[name]);
 });

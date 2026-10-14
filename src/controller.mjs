@@ -27,7 +27,7 @@ function redirectedBaseUrl(value) {
 }
 
 async function qrDataUrl(data) {
-  const { default: QRCode } = await import('qrcode');
+  const { default: QRCode } = await import('../vendor/qrcode.cjs');
   return QRCode.toDataURL(data, { width: 260, margin: 2 });
 }
 

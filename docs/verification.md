@@ -1,5 +1,9 @@
 # Verification record
 
+## Release 0.3.1
+
+QR generation uses a checked-in reproducible bundle. Tests compare decoded PNG pixels with upstream, check artifact hashes/licenses, and install the real tarball into a separate directory with development dependencies omitted. That production install must contain only the plugin and must generate the login PNG without resolving qrcode or esbuild externally. These tests do not scan a live account QR or send WeChat messages.
+
 ## Release 0.3.0
 
 Review scope: source code, current Harness Service/Event contracts, package contents and automated tests. No private credentials or local live message stores were inspected. No live WeChat message was sent during the public-version review.

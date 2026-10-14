@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1 — 2026-10-14
+
+- Prebundle QR PNG generation and its three MIT-licensed libraries; no external runtime dependencies.
+- Keep build tools as development-only dependencies and ship reproducible artifacts with full license texts.
+- Validate QR pixels against upstream and verify a production-only isolated install generates login QR codes.
+- Installation and upgrades no longer require installing dependencies in a local clone.
+
 ## 0.3.0 — 2026-10-14
 
 First public preview of `@satanfire/dsh-wechat`.

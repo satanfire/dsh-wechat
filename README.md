@@ -22,11 +22,10 @@
 ```sh
 git clone https://github.com/satanfire/dsh-wechat.git
 cd dsh-wechat
-npm ci --ignore-scripts
 dsh plugin --profile web add "$PWD"
 ```
 
-也可以在 DSH 的插件管理页“添加插件”中输入克隆目录的**绝对路径**。包直接加载 `index.mjs` 和 `src/`，没有构建步骤，也没有安装生命周期脚本。安装后重启已有 DSH Web 进程，再刷新浏览器。
+也可以在 DSH 的插件管理页“添加插件”中输入克隆目录的**绝对路径**。二维码依赖已预先打包在插件内，安装时无需额外下载运行时依赖、构建或运行安装脚本。安装后重启已有 DSH Web 进程，再刷新浏览器。
 
 支持 GitHub 包来源的安装器也可使用：
 
@@ -112,7 +111,7 @@ node scripts/recover.mjs --profile web hold MESSAGE_ID
 
 ## 升级与卸载
 
-本地来源更新：停止该 profile 的 DSH，进入克隆目录执行 `git pull --ff-only`、`npm ci --ignore-scripts`，再重新启动。切换 GitHub 包版本时，通过插件管理器更新/重新安装，然后重启；单纯刷新浏览器不会替换 Host 模块。
+本地来源更新：停止该 profile 的 DSH，进入克隆目录执行 `git pull --ff-only`，再重新启动。切换 GitHub 包版本时，通过插件管理器更新/重新安装，然后重启；单纯刷新浏览器不会替换 Host 模块。
 
 卸载使用插件管理页，或：
 
@@ -126,6 +125,7 @@ dsh plugin --profile web remove @satanfire/dsh-wechat
 
 ```sh
 npm ci --ignore-scripts
+npm run build:vendor
 npm run check
 npm test
 npm run check:package
