@@ -6,7 +6,7 @@ A community, single-owner WeChat iLink Bot bridge for **DeepSeek Harness Web**. 
 
 ## Requirements and installation
 
-First public version: **0.3.0**. The declared supported Harness version is **`@deepseek-ai/dsh 0.2.0-rc.2`**, with its Web services and a configured model. Node.js **22+** is required. Local validation uses macOS; CI is configured for Ubuntu/macOS and Node 22/24. Windows and other Harness versions have not been accepted yet.
+Requires **`@deepseek-ai/dsh 0.2.0-rc.2`** with Web services and a configured model, plus Node.js **22+**. Supports macOS and Linux; Windows has not been verified.
 
 ```sh
 git clone https://github.com/satanfire/dsh-wechat.git
@@ -21,9 +21,9 @@ Alternatively, enter the clone's absolute path in the Harness plugin manager, or
 dsh plugin --profile web add github:satanfire/dsh-wechat
 ```
 
-The package loads source directly; no build or install lifecycle scripts are needed. Restart the existing Harness Web process and refresh its page. The package name is `@satanfire/dsh-wechat`; GitHub availability does not mean it has been published to npm.
+No build step is required. After installation, restart the existing Harness Web process and refresh its page. Install from GitHub or a local directory; the package is not yet published to npm.
 
-Do not enable this package and the old `@local/dsh-wechat` together in the same profile: both use the same settings slot, route, credential namespace, and state directory. Disable the old bundle first. Do not run another bridge polling the same bot account.
+Do not run multiple WeChat bridges using the same bot account.
 
 ## Connect and use
 
@@ -41,7 +41,7 @@ Open **Settings → WeChat**, select **Scan to connect**, confirm on your phone,
 
 Control commands must be literal text. Use `text:` for an answer that should remain a numeric string. Codes expire within five minutes and do not survive restart.
 
-Phone approvals include the actual tool arguments and verify durable WeChat request/turn ownership. Missing or over-500-character arguments and unverified calls fall back to Web review. Mixed Web/WeChat turns cannot use request-scoped media sending or phone interactions. Settings omit inbound queue/review counters without a corresponding action UI.
+Phone approvals include the actual tool arguments and verify durable WeChat request/turn ownership. Missing or over-500-character arguments and unverified calls fall back to Web review. Mixed Web/WeChat turns cannot use request-scoped media sending or phone interactions.
 
 ## Attachments and notifications
 
@@ -90,7 +90,7 @@ Stop affects bridge polling and waiting, not admitted Harness tasks. Use `/stop`
 
 ## Upgrade, development, and scope
 
-For a local clone, stop Harness, `git pull --ff-only`, run `npm ci --ignore-scripts`, then restart. For a GitHub package, update/reinstall through plugin management and restart. Uninstall with `dsh plugin --profile web remove @satanfire/dsh-wechat`; unlinking the package does not erase credentials or local state. Log out before uninstalling to clear them. Tasks already discarded by the older local 0.2.2 cannot be restored.
+For a local clone, stop Harness, `git pull --ff-only`, run `npm ci --ignore-scripts`, then restart. For a GitHub package, update/reinstall through plugin management and restart. Uninstall with `dsh plugin --profile web remove @satanfire/dsh-wechat`; unlinking the package does not erase credentials or local state. Log out before uninstalling to clear them.
 
 ```sh
 npm ci --ignore-scripts
@@ -99,6 +99,6 @@ npm test
 npm run check:package
 ```
 
-Checks cover manifest/lockfile/client identity, syntax, recovery, deduplication, ownership, approval details, attachment bounds, and a real packed tarball. Tests use mocked network and temporary stores. Real QR login, long-lived context, media interoperability, provider deduplication, and other operating systems still require manual acceptance. See [verification](docs/verification.md). GitHub pushes do not publish npm automatically.
+These commands check the code, run tests, and validate package contents. Tests do not send WeChat messages. See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidance.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and [NOTICE.md](NOTICE.md). Do not attach tokens, QR codes, context tokens, local state, or private chats to Issues.

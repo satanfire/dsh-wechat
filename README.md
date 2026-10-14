@@ -10,10 +10,10 @@
 
 - 已安装并配置模型的 DSH Web，兼容声明目前限定为 **`@deepseek-ai/dsh 0.2.0-rc.2`**。
 - Node.js **22 或更新版本**；本地开发和测试需要 npm。
-- Host 能访问微信 iLink 和媒体 CDN。此插件依赖 DSH 的 `sessionController`、`connection`、`credentials`、附件、文件上传、文件系统、工具和 Agent 服务。
+- 运行 DSH 的设备需要能够访问微信 iLink 和媒体 CDN。
 - 一个 profile 绑定一个微信机器人，只接收绑定者本人的消息。
 
-本地验证在 macOS 完成；CI 配置覆盖 Ubuntu/macOS、Node 22/24，运行结果以 Actions 为准。Windows 和其他 DSH 版本尚未验收。不要同时运行另一个桥接程序轮询同一个机器人。
+支持 macOS 和 Linux。Windows 暂未验证。请勿让多个微信桥接程序同时使用同一个机器人账号。
 
 ## 安装
 
@@ -34,9 +34,7 @@ dsh plugin --profile web add "$PWD"
 dsh plugin --profile web add github:satanfire/dsh-wechat
 ```
 
-包名为 `@satanfire/dsh-wechat`。仓库公开不等于已经发布到 npm；未发布前请使用上述本地或 GitHub 来源。
-
-**同一个 profile 中不要同时启用本插件和旧的 `@local/dsh-wechat`。** 二者使用相同设置入口、API 路径与状态目录；先停用旧包，再安装本插件。切换不读取其他项目的微信登录文件。
+目前请通过 GitHub 或本地目录安装，尚未发布到 npm。
 
 ## 扫码与使用
 
@@ -45,7 +43,7 @@ dsh plugin --profile web add github:satanfire/dsh-wechat
 3. 绑定后点击“启动”，给机器人发送一条普通文字。
 4. 插件创建独立 DSH 会话；会话 ID 可在设置页查看，也能在网页版打开。
 
-设置页显示连接、运行状态、当前会话及发件状态，不展示没有处理入口的入站队列/复核计数。普通任务使用“正在输入”反馈，只回传最终文本，不额外发送“收到”消息。
+设置页可查看连接、运行状态、当前会话和发件状态。处理任务时，微信会显示“正在输入”，完成后收到最终回复。
 
 | 微信文字命令 | 作用 |
 | --- | --- |
@@ -122,7 +120,7 @@ node scripts/recover.mjs --profile web hold MESSAGE_ID
 dsh plugin --profile web remove @satanfire/dsh-wechat
 ```
 
-卸载本身不删除本地状态/凭据；若要解绑和清空，先在微信设置中退出登录。早期本机 0.2.2 已丢弃的任务正文无法恢复；0.3.0 从现有状态读取，保留仍存在的失败记录。
+卸载本身不删除本地状态和凭据。若要解绑并清空数据，请先在微信设置中退出登录。
 
 ## 开发与验证
 
@@ -133,9 +131,7 @@ npm test
 npm run check:package
 ```
 
-`check` 检查 JavaScript 语法、包名/客户端标识、入口、锁文件和元数据。`check:package` 在独立临时目录制作并展开真实 npm 压缩包，检查必需文件、源码导入及禁止文件。CI 运行上述检查。没有自动 npm 发布工作流；GitHub push 不会发布 npm。
-
-测试使用模拟网络、临时存储和 DSH API 替身，不向微信发送消息。它们覆盖去重、恢复、未知发送停止、跨端轮次拒绝、审批参数与失效、附件边界和卸载清理。真实扫码、长期上下文、真实媒体、平台去重和其他操作系统仍需人工验收；详见 [验证记录](docs/verification.md)。
+上述命令检查代码、运行测试并验证安装包内容。测试不会向微信发送消息。开发和贡献说明见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 安全、贡献与许可
 
