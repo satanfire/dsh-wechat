@@ -38,7 +38,13 @@ function promptParts(input) {
   return content;
 }
 
-/** Derive a request's disposition from the durable Session log. */
+/**
+ * Derive a request's disposition from the durable Session log.
+ *
+ * Statuses: `pending` (still queued), `inflight` (taken by the runtime, commit
+ * not yet durable), `admitted`, `completed`, `unknown`, `needsReview` (only for
+ * states this code cannot attribute safely).
+ */
 export function inspectRequest(events, requestId) {
   const pending = { 'next-turn': [], 'next-step': [] };
   let queued = false;
@@ -76,7 +82,11 @@ export function inspectRequest(events, requestId) {
     if (pending['next-turn'].some((message) => ownRequest(message, requestId))
       || pending['next-step'].some((message) => ownRequest(message, requestId))) return { status: 'pending' };
     if (cancelled) return { status: 'completed', text: '请求已取消。', reason: 'canceled' };
-    if (queued && removed) return { status: 'needsReview', reason: 'request left inbox without committed admission' };
+    // Taken from the inbox but no durable admission yet. The runtime writes the
+    // `user/message` commit a few events later, so this is a normal delivery
+    // window, not an ambiguous outcome. Callers keep waiting; a bounded grace
+    // caps the wait in case the commit never arrives.
+    if (queued && removed) return { status: 'inflight', reason: 'request left inbox without committed admission' };
     return { status: 'unknown' };
   }
   // Multiple human requests in one turn make a combined answer unattributable.
@@ -109,7 +119,8 @@ export function inspectRequest(events, requestId) {
 
 /** DSH SessionController adapter for one owner-bound WeChat conversation. */
 export class HarnessAdapter {
-  constructor(ctx, { cwd, agentPreset = 'standard', waitTimeoutMs = 30 * 60 * 1000 }) {
+  constructor(ctx, { cwd, agentPreset = 'standard', waitTimeoutMs = 30 * 60 * 1000,
+    inflightGraceMs = 60 * 1000 }) {
     if (!ctx?.sessionController || typeof ctx.on !== 'function')
       throw new TypeError('HarnessAdapter requires sessionController and Host events');
     if (typeof cwd !== 'string' || !cwd) throw new TypeError('cwd is required');
@@ -117,6 +128,7 @@ export class HarnessAdapter {
     this.cwd = cwd;
     this.agentPreset = agentPreset;
     this.waitTimeoutMs = waitTimeoutMs;
+    this.inflightGraceMs = inflightGraceMs;
   }
   createSession(sessionId) {
     return this.ctx.sessionController.create({ sessionId, cwd: this.cwd, agentPreset: this.agentPreset });
@@ -144,11 +156,13 @@ export class HarnessAdapter {
       let dirty = false;
       let checking = false;
       let timer;
+      let grace;
       let off;
       const close = () => {
         if (closed) return;
         closed = true;
         clearTimeout(timer);
+        clearTimeout(grace);
         signal?.removeEventListener('abort', onAbort);
         off?.();
       };
@@ -164,6 +178,18 @@ export class HarnessAdapter {
             if (closed) break;
             if (state.status === 'completed') { close(); resolve(state.text); break; }
             if (state.status === 'needsReview') { fail(new NeedsReviewError(state.reason)); break; }
+            // `inflight` means the runtime took the message but the durable
+            // commit has not landed yet. That window normally closes within a
+            // few events, so keep waiting. The grace bounds the wait when the
+            // commit never arrives, instead of blocking the queue for the full
+            // waitTimeoutMs.
+            if (state.status === 'inflight') {
+              if (!grace) {
+                grace = setTimeout(() => fail(Object.assign(
+                  new Error('request left the inbox without a durable admission'),
+                  { code: 'inflight-timeout' })), this.inflightGraceMs);
+              }
+            } else if (grace) { clearTimeout(grace); grace = undefined; }
           } catch (error) { if (!closed) fail(error); break; }
         } while (dirty && !closed);
         checking = false;

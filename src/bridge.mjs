@@ -302,7 +302,10 @@ export class Bridge {
       await this.#store.update(state => { state.inbox.find(r => r.id === item.id).status = 'submitted'; });
     } else if (item.status === 'dispatching') {
       const found = await this.#harness.lookupRequest(sessionId, requestId, signal);
-      if (!['pending', 'admitted', 'completed'].includes(found?.status)) {
+      // `inflight` is a resumable outcome: the runtime took the message but the
+      // durable commit is still pending. Wait for it instead of discarding the
+      // request; the wait is still bounded and never replays the prompt.
+      if (!['pending', 'admitted', 'completed', 'inflight'].includes(found?.status)) {
         await this.#store.update(state => {
           const r = state.inbox.find(row => row.id === item.id);
           r.status = 'failed';

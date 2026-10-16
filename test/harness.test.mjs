@@ -69,7 +69,10 @@ test('pending and admitted are reconstructed from durable inbox and user source'
     event('step/start', 3, { turn: 1, step: 1 }),
     event('user/message', 4, user('wx-1'))];
   assert.deepEqual(inspectRequest(later, 'wx-1'), { status: 'admitted', turn: 1 });
-  assert.equal(inspectRequest(later.slice(0, 3), 'wx-1').status, 'needsReview');
+  // Taken from the inbox, commit not durable yet: a delivery window, not an
+  // ambiguous outcome. Treating it as terminal dropped real replies in production.
+  assert.deepEqual(inspectRequest(later.slice(0, 3), 'wx-1'),
+    { status: 'inflight', reason: 'request left inbox without committed admission' });
   assert.equal(inspectRequest(later, 'different').status, 'unknown');
 });
 
@@ -129,5 +132,36 @@ test('wait uses bounded lifecycle and cleans listener on timeout and abort', asy
   const pending = adapter.waitForReply('wechat-1', 'wx-unknown', stop.signal);
   stop.abort(new Error('stopped'));
   await assert.rejects(pending, /stopped/);
+  assert.equal(listeners.size, 0);
+});
+
+test('take-then-commit window keeps waiting instead of dropping the request', async () => {
+  const { ctx, events, push } = fixture();
+  const adapter = new HarnessAdapter(ctx, { cwd: '/work', waitTimeoutMs: 1000 });
+  events.push(
+    event('agent/inbox/spliced', 0, { target: 'next-turn', start: 0, inserted: [user('wx-race')] }),
+    event('turn/start', 1, { turn: 1 }));
+  const reply = adapter.waitForReply('wechat-1', 'wx-race');
+  // The bridge re-inspects on the removal event, before the commit is durable.
+  push(event('agent/inbox/spliced', 2, { target: 'next-turn', start: 0, removedCount: 1, inserted: [] }));
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal((await adapter.lookupRequest('wechat-1', 'wx-race')).status, 'inflight');
+  // The durable admission and the answer follow a few events later.
+  push(event('step/start', 3, { turn: 1, step: 1 }));
+  push(event('user/message', 4, user('wx-race')));
+  push(assistant(1, 5, '真实回答'));
+  push(completed(1, 6));
+  assert.equal(await reply, '真实回答');
+});
+
+test('inflight without a durable admission fails after the grace, not the full wait', async () => {
+  const { ctx, events, push, listeners } = fixture();
+  const adapter = new HarnessAdapter(ctx, { cwd: '/work', waitTimeoutMs: 60_000, inflightGraceMs: 20 });
+  events.push(
+    event('agent/inbox/spliced', 0, { target: 'next-turn', start: 0, inserted: [user('wx-lost')] }),
+    event('turn/start', 1, { turn: 1 }));
+  const reply = adapter.waitForReply('wechat-1', 'wx-lost');
+  push(event('agent/inbox/spliced', 2, { target: 'next-turn', start: 0, removedCount: 1, inserted: [] }));
+  await assert.rejects(reply, { code: 'inflight-timeout' });
   assert.equal(listeners.size, 0);
 });
