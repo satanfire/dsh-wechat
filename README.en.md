@@ -6,7 +6,7 @@ A community, single-owner WeChat iLink Bot bridge for **DeepSeek Harness Web**. 
 
 ## Requirements and installation
 
-Requires **`@deepseek-ai/dsh 0.2.0-rc.2`** with Web services and a configured model, plus Node.js **22+**. Supports macOS and Linux; Windows has not been verified.
+Requires **`@deepseek-ai/dsh >= 0.2.0-rc.2`** (a lower bound only, no upper bound) with Web services and a configured model, plus Node.js **22+**. Supports macOS and Linux; Windows has not been verified.
 
 ```sh
 git clone https://github.com/satanfire/dsh-wechat.git

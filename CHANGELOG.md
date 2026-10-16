@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1 — 2026-10-16
+
+- `@deepseek-ai/dsh` 兼容声明由精确锁定 `0.2.0-rc.2` 改为下限 `>=0.2.0-rc.2`。DSH 的兼容性检查按 `peerDependencies` 的版本范围判定，精确锁定会让更新运行时直接跳过整个 bundle。
+- DSH 的这项检查不读 `peerDependenciesMeta.optional`，所以此前把该 peer 标为 optional 并不能免除拦截；本次直接放宽范围。
+- 验证范围：仅确认在 DSH 0.2.1-alpha.4 上 bundle 可被加载（不再被版本拦截）。微信登录、消息收发等链路未在 0.2.0-rc.2 之外的运行时复验。
+- `scripts/check.mjs`、`package-lock.json`、`README.md`、`README.en.md`、`docs/verification.md` 同步该声明。
+
 ## 0.4.0 — 2026-10-14
 
 - 设置页移除“待发送”“发送状态待确认”行及计数。

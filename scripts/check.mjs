@@ -16,7 +16,9 @@ assert.equal(lock.version, manifest.version);
 assert.equal(lock.packages[''].version, manifest.version);
 assert.equal(manifest.exports['.'], './index.mjs');
 assert.equal(manifest.dsh.bundle.patch, './cordis.patch.yml');
-assert.equal(manifest.peerDependencies['@deepseek-ai/dsh'], '0.2.0-rc.2');
+// 只声明下限。DSH 的兼容性检查按 peerDependencies 的版本范围判定，精确锁定会让
+// 更新的运行时直接拒绝加载插件；因此这里不放上限，避免每次运行时升级都要改插件。
+assert.equal(manifest.peerDependencies['@deepseek-ai/dsh'], '>=0.2.0-rc.2');
 const client = await readFile(path.join(root, 'client.js'), 'utf8');
 assert.ok(client.includes(`id: '${manifest.name}'`));
 assert.ok((await readFile(path.join(root, 'cordis.patch.yml'), 'utf8')).includes("name: './index.mjs'"));

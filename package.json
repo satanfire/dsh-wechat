@@ -1,6 +1,6 @@
 {
   "name": "@satanfire/dsh-wechat",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "icon": "./icon.svg",
   "description": "Owner-bound WeChat iLink bridge for DeepSeek Harness Web",
   "type": "module",
@@ -56,7 +56,7 @@
     "check:package": "node scripts/check-package.mjs"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh": "0.2.0-rc.2"
+    "@deepseek-ai/dsh": ">=0.2.0-rc.2"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/dsh": {
