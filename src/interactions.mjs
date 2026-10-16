@@ -112,7 +112,10 @@ export class Interactions {
     const [, action, nonce, reply = ''] = match;
     const p = this.#pending.get(nonce);
     if (!p || p.settled) return fail('请求已失效或不存在。');
-    if (command.userId !== p.owner.userId || (command.sessionId !== undefined && command.sessionId !== p.sessionId)) return fail('请求不属于此用户或会话。');
+    // The request belongs to the Session that created it, not to the current
+    // WeChat binding: `/switch` may point elsewhere while the pending request
+    // is still live. `#owner` below re-verifies the request's own Session.
+    if (command.userId !== p.owner.userId) return fail('请求不属于此用户。');
     const owner = this.#owner(p.sessionId);
     if (!owner || owner.id !== p.owner.id || owner.userId !== p.owner.userId) {
       this.#settle(p, false);

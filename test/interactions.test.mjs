@@ -54,19 +54,28 @@ test('approval prompts durable owner outbox, allows once, consumes nonce, preser
   assert.equal((await f.answer(`/approve ${nonce}`)).accepted, false);
 });
 
-test('reject, invalid syntax, foreign user/session, and plain strings cannot grant', async t => {
+test('reject, invalid syntax, foreign user, and plain strings cannot grant', async t => {
   const f = fixture(t);
   const pending = f.approval();
   await f.flush();
   const nonce = f.nonce();
   for (const [text, extra] of [
     [`/approve ${nonce}`, { userId: 'stranger' }],
-    [`/approve ${nonce}`, { sessionId: 'other' }],
     [`/approve ${nonce} yes`, {}], [`/answer ${nonce} 1`, {}],
   ]) assert.equal((await f.answer(text, extra)).accepted, false);
   assert.equal((await f.bridge.answer(`/approve ${nonce}`)).handled, false);
   assert.equal((await f.answer(`/reject ${nonce}`)).accepted, true);
   assert.equal(await pending, 'rejected');
+});
+
+test('answers follow the pending request session after /switch replaced the binding', async t => {
+  const f = fixture(t);
+  const result = f.approval();
+  await f.flush();
+  // The bridge reports whatever Session is bound now. A request from another
+  // Session stays answerable while its own task and turn are still live.
+  assert.equal((await f.answer(`/approve ${f.nonce()}`, { sessionId: 'switched-elsewhere' })).accepted, true);
+  assert.equal(await result, 'allowed-once');
 });
 
 test('unowned, disabled and no-agent requests delegate without overriding policy', async t => {

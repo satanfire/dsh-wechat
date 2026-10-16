@@ -26,19 +26,26 @@ Do not run multiple WeChat bridges using the same bot account.
 
 ## Connect and use
 
-Open **Settings → WeChat**, select **Scan to connect**, confirm on your phone, then select **Start**. Send the bot a text message. The bridge creates a dedicated Harness session; its ID is visible in settings and its conversation can be opened in Web.
+Open **Settings → WeChat**, select **Scan to connect**, confirm on your phone, then select **Start**. Send the bot a text message. The bridge creates a dedicated Harness session; its ID is visible in settings and its conversation can be opened in Web. Use `/list` to see switchable sessions, then `/switch NUMBER` to send later messages to another one.
 
 | Text command | Effect |
 | --- | --- |
 | `/new` | Create and bind a new session |
+| `/list` | List switchable sessions; `▸` marks the bound one |
+| `/switch NUMBER` | Bind the session at that position in the latest `/list` |
 | `/status` | Check connection |
-| `/stop` | Request cancellation of the current Harness task |
+| `/stop` | Cancel the task in the bound session |
+| `/stop all` | Cancel every running WeChat task, including one left in an older session |
 | `/help` | Show commands |
 | `/approve CODE` | Allow this operation once |
 | `/reject CODE` | Reject this operation |
 | `/answer CODE ANSWER` | Answer a question; option numbers and comma-separated multi-select are supported |
 
 Control commands must be literal text. Use `text:` for an answer that should remain a numeric string. Codes expire within five minutes and do not survive restart.
+
+`/list` shows what the Web sidebar shows: no subagent sessions, no archived sessions, and a blank unused session only while it is the bound one. Rows are ordered by recent activity and capped at 15. `/switch` numbers come from the latest `/list`; after ten minutes, or after a newer list, send `/list` again.
+
+Switching only redirects later messages; it does not widen `/stop`. `/stop` cancels the bound session only — use `/stop all` for a task still running in an older session. Approvals and questions from that session stay answerable through `/approve`, `/reject`, and `/answer`, even while another session is bound. A message that is already queued but not yet dispatched uses the binding that exists when it is dispatched.
 
 Phone approvals include the actual tool arguments and verify durable WeChat request/turn ownership. Missing or over-500-character arguments and unverified calls fall back to Web review. Mixed Web/WeChat turns cannot use request-scoped media sending or phone interactions.
 

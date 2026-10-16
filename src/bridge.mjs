@@ -1,8 +1,11 @@
 import { createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { outboxSeenId, outboxFailedId } from './store.mjs';
+import { visibleSessions, formatSessionList, sessionLabel, MAX_LISTED_SESSIONS } from './session-list.mjs';
 
-const CONTROL = new Set(['/stop', '/status', '/help', '/approve', '/reject', '/answer']);
+const CONTROL = new Set(['/stop', '/status', '/help', '/list', '/switch', '/approve', '/reject', '/answer']);
+/** How long one `/list` numbering stays valid for `/switch`. */
+const SESSION_LIST_TTL_MS = 10 * 60 * 1000;
 const command = text => text.trim().split(/\s+/)[0].toLowerCase();
 const errorName = error => typeof error?.code === 'string' ? error.code : 'bridge-error';
 const sessionFor = id => `session-${createHash('sha256').update(id).digest('hex').slice(0, 32)}`;
@@ -69,7 +72,7 @@ export class Bridge {
   #store; #client; #harness; #ownerId; #interactions;
   #abort; #pollTask; #workTask; #sendTask; #timer; #controlTasks = new Set();
   #closing; #running = false; #connected = false; #error = null;
-  #typingIntervalMs; #typingTimeoutMs; #typingState = { active: null };
+  #typingIntervalMs; #typingTimeoutMs; #typingState = { active: null }; #sessionList = null;
 
   constructor({ store, client, harness, ownerId, interactions, media, outbound, attachments, typingIntervalMs = 8000, typingTimeoutMs = 3000 }) {
     if (!store || !client || !harness || !ownerId) throw new TypeError('Bridge dependencies required');
@@ -156,11 +159,85 @@ export class Bridge {
   #handleControls() {
     for (const item of this.#store.snapshot().inbox) {
       if (item.status !== 'queued' || !CONTROL.has(command(item.text))) continue;
-      const task = this.#handleControl(item).catch(error => { this.#error = errorName(error); });
+      const task = this.#handleControl(item, this.#abort.signal).catch(error => { this.#error = errorName(error); });
       this.#controlTasks.add(task); task.finally(() => this.#controlTasks.delete(task));
     }
   }
-  async #handleControl(item) {
+  /** Sessions with a WeChat task that is still in flight. */
+  #runningSessionIds() {
+    const ids = new Set();
+    for (const row of this.#store.snapshot().inbox) {
+      if (row.sessionId && (row.status === 'dispatching' || row.status === 'submitted')) ids.add(row.sessionId);
+    }
+    return ids;
+  }
+  async #visibleSessions(currentSessionId, signal) {
+    const { items } = await this.#harness.listSessions(signal);
+    return visibleSessions(items, { archived: this.#harness.archivedSessionIds(), currentSessionId });
+  }
+  async #stopCurrentSession() {
+    const sessionId = this.#store.snapshot().sessionId;
+    if (!sessionId) return '目前没有绑定的会话';
+    try { await this.#harness.cancel(sessionId); }
+    catch (error) { this.#error = errorName(error); return '停止请求失败，请稍后重试。'; }
+    return '已请求停止当前会话的任务。';
+  }
+  async #stopAllSessions() {
+    const targets = this.#runningSessionIds();
+    if (!targets.size) return '目前没有正在运行的微信任务';
+    const results = await Promise.allSettled([...targets].map(sessionId => {
+      try { return this.#harness.cancel(sessionId); }
+      catch (error) { return Promise.reject(error); }
+    }));
+    const failed = results.filter(result => result.status === 'rejected').length;
+    return failed
+      ? `已请求停止 ${targets.size} 个会话，其中 ${failed} 个失败。`
+      : `已请求停止 ${targets.size} 个会话的任务。`;
+  }
+  /** `/stop` targets the bound Session; `/stop all` targets every running task. */
+  async #stopCommand(text) {
+    const match = /^\/stop(?:\s+(\S+))?$/i.exec(text.trim());
+    const scope = match?.[1]?.toLowerCase();
+    if (match && scope === undefined) return this.#stopCurrentSession();
+    if (match && scope === 'all') return this.#stopAllSessions();
+    return '用法：/stop 停止当前会话的任务；/stop all 停止所有正在运行的微信任务。';
+  }
+  async #listSessions(signal) {
+    const currentSessionId = this.#store.snapshot().sessionId;
+    const items = await this.#visibleSessions(currentSessionId, signal);
+    // Number only what the owner actually saw, so `/switch` cannot name a hidden row.
+    this.#sessionList = { at: Date.now(), ids: items.slice(0, MAX_LISTED_SESSIONS).map(summary => summary.sessionId) };
+    return formatSessionList(items, { currentSessionId });
+  }
+  /** Switch the WeChat binding to the Session numbered by the latest `/list`. */
+  async #switchSession(text, signal) {
+    const match = /^\/switch\s+(\d{1,3})$/i.exec(text.trim());
+    if (!match) return '用法：/switch 序号。先发送 /list 查看列表。';
+    const list = this.#sessionList;
+    if (!list || Date.now() - list.at > SESSION_LIST_TTL_MS) return '列表已过期，请先发送 /list。';
+    const sessionId = list.ids[Number(match[1]) - 1];
+    if (!sessionId) return `序号超出范围（共 ${list.ids.length} 个），请重新发送 /list。`;
+    const currentSessionId = this.#store.snapshot().sessionId;
+    if (sessionId === currentSessionId) return '当前已经在这个会话。';
+    // Re-check against the binding that exists now: a Session hidden since the
+    // list was taken (archived, or blank again after `/new`) must not be reached.
+    const items = await this.#visibleSessions(currentSessionId, signal);
+    const target = items.find(summary => summary.sessionId === sessionId);
+    if (!target) return '该会话已归档、已删除或已不在列表中，请重新发送 /list。';
+    await this.#store.update(state => { state.sessionId = sessionId; });
+    return `已切换到：${sessionLabel(target)}\n后续消息在该会话中处理。`;
+  }
+  /** Answer a session command; a failure must still reply instead of going silent. */
+  async #sessionCommand(name, text, signal) {
+    try {
+      return name === '/list' ? await this.#listSessions(signal) : await this.#switchSession(text, signal);
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      this.#error = errorName(error);
+      return '会话操作失败，请稍后重试。';
+    }
+  }
+  async #handleControl(item, signal) {
     const claimed = await this.#store.update(state => {
       const row = state.inbox.find(r => r.id === item.id);
       if (!row || row.status !== 'queued') return false;
@@ -169,15 +246,14 @@ export class Bridge {
     if (!claimed) return;
     try {
       let text;
+      const name = command(item.text);
       if (item.sourceKind !== 'text') text = '仅文字消息可执行微信命令';
-      else if (command(item.text) === '/stop') {
-        const id = this.#store.snapshot().sessionId;
-        if (id) await this.#harness.cancel(id);
-        text = id ? '已请求停止当前任务' : '目前没有绑定的会话';
-      } else if (command(item.text) === '/status') text = this.#connected ? '微信连接正常' : '微信连接中';
-      else if (command(item.text) === '/help') text = '/new 新会话；/status 状态；/stop 停止；/approve、/reject、/answer 回复待处理请求';
+      else if (name === '/stop') text = await this.#stopCommand(item.text);
+      else if (name === '/status') text = this.#connected ? '微信连接正常' : '微信连接中';
+      else if (name === '/list' || name === '/switch') text = await this.#sessionCommand(name, item.text, signal);
+      else if (name === '/help') text = '/new 新会话；/list 会话列表；/switch 序号 切换；/status 状态；/stop 停止当前任务；/stop all 停止所有任务；/approve、/reject、/answer 回复待处理请求';
       else {
-        const result = await this.#interactions?.answer?.({ ...item, sessionId: this.#store.snapshot().sessionId });
+        const result = await this.#interactions?.answer?.({ ...item });
         text = result?.message ?? '目前没有可处理的审批或追问';
       }
       await this.#store.update(state => {

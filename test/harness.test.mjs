@@ -19,21 +19,40 @@ function fixture() {
   const events = [];
   const listeners = new Set();
   const calls = [];
+  const listed = [];
+  const registry = { archivedSessionIds: [] };
   const ctx = {
     sessionController: {
       async create(request) { calls.push(['create', request]); return { sessionId: request.sessionId }; },
       async prompt(request, signal) { calls.push(['prompt', request, signal]); return { accepted: true }; },
       cancel(request) { calls.push(['cancel', request]); return { accepted: true }; },
+      async list(request, signal) { calls.push(['list', request, signal]); return { items: [...listed] }; },
       async inspect() { return { meta: {}, events: [...events] }; },
     },
+    get(name) { return name === 'workspaceRegistry' ? registry : undefined; },
     on(name, fn) { assert.equal(name, 'session/event'); listeners.add(fn); return () => listeners.delete(fn); },
   };
   const push = (evt, sessionId = 'wechat-1') => {
     events.push(evt);
     for (const listener of listeners) listener({ id: sessionId }, evt);
   };
-  return { ctx, events, listeners, calls, push };
+  return { ctx, events, listeners, calls, listed, registry, push };
 }
+
+test('list delegates to SessionController and reads the archive set without injecting it', async () => {
+  const { ctx, calls, listed, registry } = fixture();
+  listed.push({ sessionId: 'session-a' }, { sessionId: 'sub-1', origin: 'subagent' });
+  registry.archivedSessionIds = ['session-archived'];
+  const adapter = new HarnessAdapter(ctx, { cwd: '/work' });
+  const signal = new AbortController().signal;
+  assert.deepEqual((await adapter.listSessions(signal)).items, listed);
+  assert.deepEqual(calls.at(-1), ['list', {}, signal]);
+  const archived = adapter.archivedSessionIds();
+  assert.deepEqual(archived, ['session-archived']);
+  assert.notEqual(archived, registry.archivedSessionIds);
+  registry.archivedSessionIds = undefined;
+  assert.deepEqual(adapter.archivedSessionIds(), []);
+});
 
 test('submit uses deterministic requestId with queue mode; create/cancel use SessionController', async () => {
   const { ctx, calls } = fixture();

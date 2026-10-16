@@ -133,6 +133,16 @@ export class HarnessAdapter {
   createSession(sessionId) {
     return this.ctx.sessionController.create({ sessionId, cwd: this.cwd, agentPreset: this.agentPreset });
   }
+  /** Read every persisted Session row for the `/list` command. */
+  listSessions(signal) {
+    return this.ctx.sessionController.list({}, signal);
+  }
+  /** Registry-global archive set; empty when the deployment mounts no workspace registry. */
+  archivedSessionIds() {
+    const registry = typeof this.ctx.get === 'function' ? this.ctx.get('workspaceRegistry') : undefined;
+    const ids = registry?.archivedSessionIds;
+    return Array.isArray(ids) ? ids.slice() : [];
+  }
   submit(sessionId, requestId, content, signal) {
     const parts = typeof content === 'string' ? [{ type: 'text', text: content }] : content;
     if (!Array.isArray(parts) || !parts.length || parts.some(part =>
