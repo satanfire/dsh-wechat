@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { visibleSessions, formatSessionList, sessionLabel, relativeTime,
+import { visibleSessions, listedSessions, formatSessionList, sessionLabel, relativeTime,
   MAX_LISTED_SESSIONS } from '../src/session-list.mjs';
 
 const summary = (sessionId, extra = {}) => ({ sessionId, updatedAt: 0, running: false,
@@ -11,12 +11,17 @@ test('visibility mirrors the Web sidebar: subagent, archived and other blank row
     summary('session-main', { projections: { values: { title: '主会话' } } }),
     summary('sub-1', { origin: 'subagent', parentSessionId: 'session-main' }),
     summary('session-archived'),
+    summary('session-archived-current'),
     summary('session-blank', { blank: true }),
     summary('session-current', { blank: true }),
     summary('', {}), null, undefined,
   ];
-  const visible = visibleSessions(items, { archived: ['session-archived'], currentSessionId: 'session-current' });
+  const visible = visibleSessions(items, { archived: ['session-archived', 'session-archived-current'],
+    currentSessionId: 'session-current' });
   assert.deepEqual(visible.map(item => item.sessionId), ['session-main', 'session-current']);
+  // The bound Session stays even though the owner archived it: it is still the reply target.
+  const archivedBound = visibleSessions([summary('session-a')], { archived: ['session-a'], currentSessionId: 'session-a' });
+  assert.deepEqual(archivedBound.map(item => item.sessionId), ['session-a']);
 });
 
 test('visibility tolerates a missing archive set and keeps runtime order', () => {
@@ -55,10 +60,41 @@ test('list rendering numbers rows, marks the binding and names the switch comman
   const text = formatSessionList(items, { currentSessionId: 'session-one', now: 10_000_000_000 });
   assert.equal(text, [
     '会话列表（2 个）',
-    '1. 微信会话 · 16 分钟前 · 运行中 · 当前',
+    '1. 微信会话 · 16 分钟前 · 运行中 · ✅',
     '2. jxzt · 1 天前',
     '回复 /switch 序号 切换当前会话',
   ].join('\n'));
+});
+
+test('an archived binding is shown with `已归档` and still marked as current', () => {
+  const items = [summary('session-a', { updatedAt: 9_999_000_000, projections: { values: { title: '已归档微信会话' } } })];
+  const text = formatSessionList(items, { currentSessionId: 'session-a', archived: ['session-a'],
+    now: 10_000_000_000 });
+  assert.equal(text, [
+    '会话列表（1 个）',
+    '1. 已归档微信会话 · 16 分钟前 · 已归档 · ✅',
+    '回复 /switch 序号 切换当前会话',
+  ].join('\n'));
+});
+
+test('the bound Session stays listed when activity order puts it beyond the row cap', () => {
+  const items = Array.from({ length: MAX_LISTED_SESSIONS + 3 }, (_value, index) =>
+    summary(`session-${index}`, { updatedAt: 9_999_000_000 - index,
+      projections: { values: { title: `会话${index}` } } }));
+  const current = items.at(-1).sessionId;
+  const listed = listedSessions(items, { currentSessionId: current });
+  assert.equal(listed.length, MAX_LISTED_SESSIONS);
+  assert.equal(listed.at(-1).sessionId, current);
+  const text = formatSessionList(items, { currentSessionId: current, now: 10_000_000_000 });
+  assert.match(text, new RegExp(`^会话列表（${items.length} 个）`));
+  assert.ok(text.includes(`\n${MAX_LISTED_SESSIONS}. 会话${items.length - 1} · 16 分钟前 · ✅`));
+  assert.ok(Array.from(text).length < 800, `reply too long: ${Array.from(text).length}`);
+});
+
+test('a deleted binding is reported instead of silently vanishing', () => {
+  const items = [summary('session-other', { projections: { values: { title: '其他会话' } } })];
+  const text = formatSessionList(items, { currentSessionId: 'session-gone', now: 10_000_000_000 });
+  assert.match(text, /当前会话不在列表中（可能已删除），回复 \/new 或 \/switch 换一个。/);
 });
 
 test('labels stay on one line and inside the row budget', () => {

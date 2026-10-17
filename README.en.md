@@ -31,7 +31,7 @@ Open **Settings → WeChat**, select **Scan to connect**, confirm on your phone,
 | Text command | Effect |
 | --- | --- |
 | `/new` | Create and bind a new session |
-| `/list` | List switchable sessions; the bound one ends its row with `当前` |
+| `/list` | List switchable sessions; the bound one ends its row with ✅ |
 | `/switch NUMBER` | Bind the session at that position in the latest `/list` |
 | `/status` | Check connection |
 | `/stop` | Cancel the task in the bound session |
@@ -43,7 +43,7 @@ Open **Settings → WeChat**, select **Scan to connect**, confirm on your phone,
 
 Control commands must be literal text. Use `text:` for an answer that should remain a numeric string. Codes expire within five minutes and do not survive restart.
 
-`/list` shows what the Web sidebar shows: no subagent sessions, no archived sessions, and a blank unused session only while it is the bound one. Rows are ordered by recent activity and capped at 15. `/switch` numbers come from the latest `/list`; after ten minutes, or after a newer list, send `/list` again.
+`/list` shows what the Web sidebar shows: no subagent sessions, no archived sessions, and a blank unused session only while it is the bound one. Rows are ordered by recent activity and capped at 15. The bound session always stays listed: an archived binding is kept and marked `已归档`, and it is appended when activity order would drop it past the cap. A deleted binding is reported. `/switch` numbers come from the latest `/list`; after ten minutes, or after a newer list, send `/list` again.
 
 Switching only redirects later messages; it does not widen `/stop`. `/stop` cancels the bound session only — use `/stop all` for a task still running in an older session. Approvals and questions from that session stay answerable through `/approve`, `/reject`, and `/answer`, even while another session is bound. A message that is already queued but not yet dispatched uses the binding that exists when it is dispatched.
 

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { outboxSeenId, outboxFailedId } from './store.mjs';
-import { visibleSessions, formatSessionList, sessionLabel, MAX_LISTED_SESSIONS } from './session-list.mjs';
+import { visibleSessions, listedSessions, formatSessionList, sessionLabel } from './session-list.mjs';
 
 const CONTROL = new Set(['/stop', '/status', '/help', '/list', '/switch', '/approve', '/reject', '/answer']);
 /** How long one `/list` numbering stays valid for `/switch`. */
@@ -173,7 +173,8 @@ export class Bridge {
   }
   async #visibleSessions(currentSessionId, signal) {
     const { items } = await this.#harness.listSessions(signal);
-    return visibleSessions(items, { archived: this.#harness.archivedSessionIds(), currentSessionId });
+    const archived = this.#harness.archivedSessionIds();
+    return { items: visibleSessions(items, { archived, currentSessionId }), archived };
   }
   async #stopCurrentSession() {
     const sessionId = this.#store.snapshot().sessionId;
@@ -204,10 +205,11 @@ export class Bridge {
   }
   async #listSessions(signal) {
     const currentSessionId = this.#store.snapshot().sessionId;
-    const items = await this.#visibleSessions(currentSessionId, signal);
-    // Number only what the owner actually saw, so `/switch` cannot name a hidden row.
-    this.#sessionList = { at: Date.now(), ids: items.slice(0, MAX_LISTED_SESSIONS).map(summary => summary.sessionId) };
-    return formatSessionList(items, { currentSessionId });
+    const { items, archived } = await this.#visibleSessions(currentSessionId, signal);
+    // Number exactly the rows the owner sees, so `/switch` cannot name a hidden row.
+    const listed = listedSessions(items, { currentSessionId });
+    this.#sessionList = { at: Date.now(), ids: listed.map(summary => summary.sessionId) };
+    return formatSessionList(items, { currentSessionId, archived });
   }
   /** Switch the WeChat binding to the Session numbered by the latest `/list`. */
   async #switchSession(text, signal) {
@@ -221,7 +223,7 @@ export class Bridge {
     if (sessionId === currentSessionId) return '当前已经在这个会话。';
     // Re-check against the binding that exists now: a Session hidden since the
     // list was taken (archived, or blank again after `/new`) must not be reached.
-    const items = await this.#visibleSessions(currentSessionId, signal);
+    const { items } = await this.#visibleSessions(currentSessionId, signal);
     const target = items.find(summary => summary.sessionId === sessionId);
     if (!target) return '该会话已归档、已删除或已不在列表中，请重新发送 /list。';
     await this.#store.update(state => { state.sessionId = sessionId; });

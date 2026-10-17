@@ -64,35 +64,58 @@ export function relativeTime(updatedAt, now = Date.now()) {
 
 /**
  * Keep the Session rows the owner recognises from the Web sidebar.
+ * The bound Session is always kept: it stays the reply target even after the
+ * owner archives it, and hiding it would leave `/list` without a current row.
  * @param items - raw `sessionController.list` summaries.
  * @param archived - registry-global archive set.
- * @param currentSessionId - Session currently bound to WeChat; its blank row stays visible.
+ * @param currentSessionId - Session currently bound to WeChat.
  * @returns visible summaries, preserving the runtime's activity order.
  */
 export function visibleSessions(items, { archived = [], currentSessionId = null } = {}) {
   const hidden = new Set(Array.isArray(archived) ? archived : []);
   return (Array.isArray(items) ? items : []).filter(summary => {
     if (!summary || typeof summary.sessionId !== 'string' || !summary.sessionId) return false;
+    if (summary.sessionId === currentSessionId) return true;
     if (summary.origin === 'subagent') return false;
-    if (summary.blank === true && summary.sessionId !== currentSessionId) return false;
+    if (summary.blank === true) return false;
     return !hidden.has(summary.sessionId);
   });
 }
 
-/** Render one numbered WeChat list; the bound Session ends its row with `· 当前`.
- * Rows keep no marker prefix so the number stays flush left on a phone. */
-export function formatSessionList(items, { currentSessionId = null, now = Date.now(),
-  limit = MAX_LISTED_SESSIONS } = {}) {
+/** Rows `/list` renders and `/switch` numbers, in activity order.
+ * When activity order alone would drop the bound Session, it joins the rows so
+ * the owner always sees where WeChat messages go. */
+export function listedSessions(items, { currentSessionId = null, limit = MAX_LISTED_SESSIONS } = {}) {
   const listed = items.slice(0, limit);
+  if (!currentSessionId || listed.some(summary => summary.sessionId === currentSessionId)) return listed;
+  const current = items.find(summary => summary.sessionId === currentSessionId);
+  if (!current) return listed;
+  if (listed.length >= limit) listed.pop();
+  listed.push(current);
+  return listed;
+}
+
+/** Render one numbered WeChat list. The bound Session ends its row with `✅`,
+ * plus `已归档` when the owner archived it. Rows keep no marker prefix. */
+export function formatSessionList(items, { currentSessionId = null, archived = [],
+  now = Date.now(), limit = MAX_LISTED_SESSIONS } = {}) {
+  const hidden = new Set(Array.isArray(archived) ? archived : []);
+  const listed = listedSessions(items, { currentSessionId, limit });
   const lines = [`会话列表（${items.length} 个）`];
+  let currentListed = false;
   for (const [index, summary] of listed.entries()) {
     const parts = [sessionLabel(summary)];
     const age = relativeTime(summary.updatedAt, now);
     if (age) parts.push(age);
     if (summary.running) parts.push('运行中');
-    if (summary.sessionId === currentSessionId) parts.push('当前');
+    if (summary.sessionId === currentSessionId) {
+      currentListed = true;
+      if (hidden.has(currentSessionId)) parts.push('已归档');
+      parts.push('✅');
+    }
     lines.push(`${index + 1}. ${parts.join(' · ')}`);
   }
+  if (currentSessionId && !currentListed) lines.push('当前会话不在列表中（可能已删除），回复 /new 或 /switch 换一个。');
   if (items.length > listed.length) lines.push(`仅列出最近 ${listed.length} 个。`);
   lines.push('回复 /switch 序号 切换当前会话');
   return lines.join('\n');
