@@ -79,17 +79,19 @@ export function visibleSessions(items, { archived = [], currentSessionId = null 
   });
 }
 
-/** Render one numbered WeChat list; `▸` marks the bound Session. */
+/** Render one numbered WeChat list; the bound Session ends its row with `· 当前`.
+ * Rows keep no marker prefix so the number stays flush left on a phone. */
 export function formatSessionList(items, { currentSessionId = null, now = Date.now(),
   limit = MAX_LISTED_SESSIONS } = {}) {
   const listed = items.slice(0, limit);
-  const lines = [`会话列表（${items.length} 个，▸ 为当前）`];
+  const lines = [`会话列表（${items.length} 个）`];
   for (const [index, summary] of listed.entries()) {
     const parts = [sessionLabel(summary)];
     const age = relativeTime(summary.updatedAt, now);
     if (age) parts.push(age);
     if (summary.running) parts.push('运行中');
-    lines.push(`${summary.sessionId === currentSessionId ? '▸' : ' '}${index + 1}. ${parts.join(' · ')}`);
+    if (summary.sessionId === currentSessionId) parts.push('当前');
+    lines.push(`${index + 1}. ${parts.join(' · ')}`);
   }
   if (items.length > listed.length) lines.push(`仅列出最近 ${listed.length} 个。`);
   lines.push('回复 /switch 序号 切换当前会话');

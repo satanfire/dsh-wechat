@@ -76,10 +76,10 @@ test('/list renders only visible sessions and marks the current binding', async 
   await until(() => f.sends.some(item => item.clientId === 'wechat-reply-list-1-0'));
   const text = f.sends.find(item => item.clientId === 'wechat-reply-list-1-0').text;
   assert.equal(f.calls.lists, 1);
-  assert.equal(text.split('\n')[0], '会话列表（2 个，▸ 为当前）');
-  assert.match(text, /▸1\. 微信会话/);
+  assert.equal(text.split('\n')[0], '会话列表（2 个）');
+  assert.match(text, /1\. 微信会话 · .* · 运行中 · 当前/);
   assert.match(text, /运行中/);
-  assert.match(text, / 2\. jxzt/);
+  assert.match(text, /\n2\. jxzt/);
   assert.ok(!text.includes('归档会话'));
   await f.bridge.stop();
 });
@@ -194,7 +194,7 @@ test('/switch refuses a blank session that is no longer the binding', async t =>
   await f.bridge.start();
   f.push(message('list-1', '/list'));
   await until(() => f.sends.some(item => item.text.startsWith('会话列表')));
-  assert.match(f.sends.find(item => item.clientId === 'wechat-reply-list-1-0').text, /▸1\. blank/);
+  assert.match(f.sends.find(item => item.clientId === 'wechat-reply-list-1-0').text, /1\. blank · 刚刚 · 当前/);
   await f.store.update(state => { state.sessionId = 'session-other'; });
   f.push(message('switch-back', '/switch 1'));
   await until(() => f.sends.some(item => item.clientId === 'wechat-reply-switch-back-0'));

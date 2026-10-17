@@ -54,9 +54,9 @@ test('list rendering numbers rows, marks the binding and names the switch comman
   ];
   const text = formatSessionList(items, { currentSessionId: 'session-one', now: 10_000_000_000 });
   assert.equal(text, [
-    '会话列表（2 个，▸ 为当前）',
-    '▸1. 微信会话 · 16 分钟前 · 运行中',
-    ' 2. jxzt · 1 天前',
+    '会话列表（2 个）',
+    '1. 微信会话 · 16 分钟前 · 运行中 · 当前',
+    '2. jxzt · 1 天前',
     '回复 /switch 序号 切换当前会话',
   ].join('\n'));
 });
@@ -77,7 +77,7 @@ test('list rendering caps long output and keeps one bounded reply', () => {
     summary(`session-${index}`, { updatedAt: 9_999_000_000,
       projections: { values: { title: `会话${index}${'长'.repeat(80)}` } } }));
   const text = formatSessionList(items, { currentSessionId: null, now: 10_000_000_000 });
-  assert.match(text, /^会话列表（18 个，▸ 为当前）\n 1\. 会话0/);
+  assert.match(text, /^会话列表（18 个）\n1\. 会话0/);
   assert.ok(text.includes(`仅列出最近 ${MAX_LISTED_SESSIONS} 个。`));
   assert.ok(!text.includes(`会话${MAX_LISTED_SESSIONS}`));
   assert.ok(Array.from(text).length < 800, `reply too long: ${Array.from(text).length}`);

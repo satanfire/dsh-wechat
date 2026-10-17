@@ -31,7 +31,7 @@ Open **Settings → WeChat**, select **Scan to connect**, confirm on your phone,
 | Text command | Effect |
 | --- | --- |
 | `/new` | Create and bind a new session |
-| `/list` | List switchable sessions; `▸` marks the bound one |
+| `/list` | List switchable sessions; the bound one ends its row with `当前` |
 | `/switch NUMBER` | Bind the session at that position in the latest `/list` |
 | `/status` | Check connection |
 | `/stop` | Cancel the task in the bound session |

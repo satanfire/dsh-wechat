@@ -47,7 +47,7 @@ dsh plugin --profile web add github:satanfire/dsh-wechat
 | 微信文字命令 | 作用 |
 | --- | --- |
 | `/new` | 创建并切换到新会话 |
-| `/list` | 列出可切换的会话，`▸` 标出当前会话 |
+| `/list` | 列出可切换的会话，行尾「当前」标出当前会话 |
 | `/switch <序号>` | 切换到 `/list` 中的第几个会话 |
 | `/status` | 检查微信连接 |
 | `/stop` | 停止当前绑定会话的任务 |
