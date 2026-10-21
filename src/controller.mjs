@@ -47,7 +47,8 @@ export class Controller {
     this.key = key;
     this.makeClient = factories.client ?? ((options) => new ILinkClient(options));
     this.makeBridge = factories.bridge ?? ((options) => new Bridge(options));
-    this.makeHarness = factories.harness ?? ((options) => new HarnessAdapter(ctx, options));
+    this.makeHarness = factories.harness ?? ((options) => new HarnessAdapter(ctx,
+      { ...options, sessionContext: () => this.serviceCtx }));
     this.makeInteractions = factories.interactions ?? (() => new Interactions(ctx, { store }));
     this.toQrDataUrl = factories.qrDataUrl ?? qrDataUrl;
     this.bridge = null;
@@ -61,6 +62,28 @@ export class Controller {
     this.closed = false;
     this.closeTask = null;
     this.titleCache = null;
+    // DSH 0.2.1 fills `sessionController.list` rows through `remoteAccess` read
+    // from the caller context, so listing needs a child context that injects it.
+    this.serviceCtx = ctx;
+    this.#adoptRemoteAccess();
+  }
+
+  /**
+   * Adopt a child context that injects `remoteAccess`, used for Session
+   * listing and the bound Session title. Runtimes that predate that service
+   * keep the plugin context, where `list` needs no scoped context.
+   */
+  #adoptRemoteAccess() {
+    const { inject } = this.ctx;
+    if (typeof inject !== 'function') return;
+    try {
+      inject.call(this.ctx, ['remoteAccess'], (scoped) => {
+        this.serviceCtx = scoped;
+        return () => { if (this.serviceCtx === scoped) this.serviceCtx = this.ctx; };
+      });
+    } catch {
+      // Runtime without `remoteAccess`: listing stays on the plugin context.
+    }
   }
 
   /**
@@ -82,11 +105,12 @@ export class Controller {
     const cached = this.titleCache;
     if (cached?.sessionId === sessionId && Date.now() - cached.at < TITLE_CACHE_MS) return cached.title;
     let title = null;
+    const caller = this.serviceCtx ?? this.ctx;
     try {
-      const { list } = this.ctx.sessionController ?? {};
+      const { list } = caller.sessionController ?? {};
       if (typeof list === 'function') {
         // `sessionController.list` answers `{ items }`; accept a bare list too.
-        const listed = await list.call(this.ctx.sessionController, {});
+        const listed = await list.call(caller.sessionController, {});
         const items = Array.isArray(listed) ? listed : Array.isArray(listed?.items) ? listed.items : [];
         const summary = items.find(item => item?.sessionId === sessionId);
         const value = summary?.projections?.values?.title;

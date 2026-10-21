@@ -54,6 +54,17 @@ test('list delegates to SessionController and reads the archive set without inje
   assert.deepEqual(adapter.archivedSessionIds(), []);
 });
 
+test('listSessions uses the injected Session context when one is supplied', async () => {
+  const { ctx, calls } = fixture();
+  const scoped = { sessionController: {
+    async list(request, signal) { calls.push(['list', request, signal]); return { items: [] }; },
+  } };
+  const adapter = new HarnessAdapter(ctx, { cwd: '/work', sessionContext: () => scoped });
+  const signal = new AbortController().signal;
+  assert.deepEqual((await adapter.listSessions(signal)).items, []);
+  assert.deepEqual(calls.at(-1), ['list', {}, signal]);
+});
+
 test('submit uses deterministic requestId with queue mode; create/cancel use SessionController', async () => {
   const { ctx, calls } = fixture();
   const adapter = new HarnessAdapter(ctx, { cwd: '/work', agentPreset: 'ptc' });

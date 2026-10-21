@@ -10,7 +10,7 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-function fixture({ statuses = [], getQr, start, stop, profile = 'web', key, sessionController } = {}) {
+function fixture({ statuses = [], getQr, start, stop, profile = 'web', key, sessionController, inject } = {}) {
   const records = new Map();
   const calls = { clients: [], starts: 0, stops: 0, interactions: 0, lists: 0 };
   const state = { enabled: false, sessionId: null, cursor: '', inbox: [], outbox: [], seen: [], binding: null };
@@ -26,6 +26,7 @@ function fixture({ statuses = [], getQr, start, stop, profile = 'web', key, sess
       async deleteRecord(id) { records.delete(id); },
     },
     ...(sessionController ? { sessionController } : {}),
+    ...(inject ? { inject } : {}),
   };
   const factories = {
     client(options) {
@@ -233,4 +234,16 @@ test('status tolerates missing, deleted, untitled, and failing Session lookups',
   assert.equal(status.sessionTitle, null);
   assert.equal(lists, 1);
   await failing.controller.close();
+});
+
+test('status lists Sessions in a context that injects remoteAccess', async () => {
+  const scoped = { sessionController: { async list() {
+    return { items: [{ sessionId: 'session-a', projections: { values: { title: '作用域标题' } } }] };
+  } } };
+  let injected;
+  const f = fixture({ inject(deps, callback) { injected = deps; callback(scoped); return () => {}; } });
+  f.state.sessionId = 'session-a';
+  assert.deepEqual(injected, ['remoteAccess']);
+  assert.equal((await f.controller.status()).sessionTitle, '作用域标题');
+  await f.controller.close();
 });

@@ -119,12 +119,15 @@ export function inspectRequest(events, requestId) {
 
 /** DSH SessionController adapter for one owner-bound WeChat conversation. */
 export class HarnessAdapter {
+  /** `sessionContext` supplies the context used to list Sessions: DSH 0.2.1
+   * filters list rows through `remoteAccess`, which that context must inject. */
   constructor(ctx, { cwd, agentPreset = 'standard', waitTimeoutMs = 30 * 60 * 1000,
-    inflightGraceMs = 60 * 1000 }) {
+    inflightGraceMs = 60 * 1000, sessionContext }) {
     if (!ctx?.sessionController || typeof ctx.on !== 'function')
       throw new TypeError('HarnessAdapter requires sessionController and Host events');
     if (typeof cwd !== 'string' || !cwd) throw new TypeError('cwd is required');
     this.ctx = ctx;
+    this.sessionContext = typeof sessionContext === 'function' ? sessionContext : () => ctx;
     this.cwd = cwd;
     this.agentPreset = agentPreset;
     this.waitTimeoutMs = waitTimeoutMs;
@@ -135,7 +138,7 @@ export class HarnessAdapter {
   }
   /** Read every persisted Session row for the `/list` command. */
   listSessions(signal) {
-    return this.ctx.sessionController.list({}, signal);
+    return this.sessionContext().sessionController.list({}, signal);
   }
   /** Registry-global archive set; empty when the deployment mounts no workspace registry. */
   archivedSessionIds() {

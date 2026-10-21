@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.5 — 2026-10-21
+
+- 修复 0.5.4 仍取不到标题：DSH 0.2.1 起 `sessionController.list` 在调用方上下文读取 `remoteAccess`，插件未注入时抛 `cannot get property "remoteAccess" without inject`，标题查询被吞掉后回退短 ID。现在按需注入 `remoteAccess` 得到子上下文并用它查询；运行时没有该服务时退回插件上下文，行为不变。
+- 同一子上下文用于 `/list`：DSH 0.2.1 起读取会话列表会因同一原因失败，`/list` 与 `/switch` 受影响，本次一并修复。
+- 新增 2 项回归用例（标题查询走注入 `remoteAccess` 的子上下文、`HarnessAdapter` 列表使用同一上下文）；全量 175 项测试通过。
+
 ## 0.5.4 — 2026-10-21
 
 - 修复 0.5.3 拿不到会话标题：`sessionController.list` 返回 `{ items }` 而不是数组，标题查询一直判空，设置页因此回退短 ID。现在同时接受 `{ items }` 与裸数组。
