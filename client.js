@@ -39,6 +39,9 @@ window.__ModuleLoader__.load({
       .dsh-wechat-row { display:flex; align-items:center; justify-content:space-between; gap:16px;
         padding:12px 0; border-bottom:1px solid var(--dsw-alias-border-l1); min-width:0; }
       .dsh-wechat-row span:last-child { min-width:0; overflow-wrap:anywhere; text-align:right; }
+      /* Session title stays on one line; the full Session id is the tooltip. */
+      .dsh-wechat-row .dsh-wechat-session { max-width:68%; white-space:nowrap; overflow:hidden;
+        text-overflow:ellipsis; }
       .dsh-wechat-muted { color:var(--dsw-alias-label-secondary); }
       .dsh-wechat-connected { color:var(--dsw-alias-state-success-primary); }
       .dsh-wechat-actions { display:flex; flex-wrap:wrap; gap:8px; padding:20px 0; }
@@ -120,8 +123,12 @@ window.__ModuleLoader__.load({
         }
       }
 
-      const row = (label, value, className) => h('div', { className: 'dsh-wechat-row', key: label },
-        h('span', { className: 'dsh-wechat-muted' }, label), h('span', { className }, value));
+      const row = (label, value, className, title) => h('div', { className: 'dsh-wechat-row', key: label },
+        h('span', { className: 'dsh-wechat-muted' }, label), h('span', { className, title }, value));
+      const shortSessionId = id => id.replace(/^session-/, '').slice(0, 8);
+      // Prefer the Session title; fall back to a short id until the title exists.
+      const sessionTitle = typeof status?.sessionTitle === 'string' ? status.sessionTitle : '';
+      const sessionHint = sessionTitle ? `${sessionTitle}\n${status.sessionId}` : status?.sessionId;
       const button = (name, disabled) => h('button', {
         key: name, type: 'button', onClick: () => act(name), disabled: !!busy || disabled,
       }, busy === name ? t('working') : t(name));
@@ -136,7 +143,8 @@ window.__ModuleLoader__.load({
             row(t('status'), status.connected ? t('connected') : status.enabled ? t('connecting') : t('disconnected'),
               status.connected ? 'dsh-wechat-connected' : ''),
             row(t('enabled'), status.enabled ? t('enabled') : t('stopped')),
-            status.sessionId && row(t('session'), status.sessionId))
+            status.sessionId && row(t('session'), sessionTitle || shortSessionId(status.sessionId),
+              sessionTitle ? 'dsh-wechat-session' : 'dsh-wechat-session dsh-wechat-muted', sessionHint))
             : h('p', { className: 'dsh-wechat-muted' }, t('loading')),
           h('div', { className: 'dsh-wechat-actions' },
             button('login', !status || !!status.bound),

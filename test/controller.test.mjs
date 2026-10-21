@@ -10,9 +10,9 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-function fixture({ statuses = [], getQr, start, stop, profile = 'web', key } = {}) {
+function fixture({ statuses = [], getQr, start, stop, profile = 'web', key, sessionController } = {}) {
   const records = new Map();
-  const calls = { clients: [], starts: 0, stops: 0, interactions: 0 };
+  const calls = { clients: [], starts: 0, stops: 0, interactions: 0, lists: 0 };
   const state = { enabled: false, sessionId: null, cursor: '', inbox: [], outbox: [], seen: [], binding: null };
   const store = {
     snapshot() { return structuredClone(state); },
@@ -25,6 +25,7 @@ function fixture({ statuses = [], getQr, start, stop, profile = 'web', key } = {
       async modifyRecord(id, fn) { const next = await fn(records.get(id)); records.set(id, next); return next; },
       async deleteRecord(id) { records.delete(id); },
     },
+    ...(sessionController ? { sessionController } : {}),
   };
   const factories = {
     client(options) {
@@ -64,7 +65,7 @@ test('profile-separated keys; login persists only validated grant and binding', 
   assert.equal(a.controller.key, 'dsh-wechat/alpha');
   await a.controller.action('login');
   await a.controller.loginTask;
-  assert.equal(a.controller.status().login.status, 'confirmed');
+  assert.equal((await a.controller.status()).login.status, 'confirmed');
   assert.deepEqual(a.records.get(a.controller.key), { kind: 'grant', payload: {
     token: 'token', ownerId: 'owner', botId: 'bot', baseUrl: 'https://ilinkai.weixin.qq.com',
   } });
@@ -108,7 +109,7 @@ test('safe QR redirect uses allowlisted HTTPS hostname and rejects other hosts',
   await evil.controller.action('login');
   await evil.controller.loginTask;
   assert.equal(evil.records.size, 0);
-  assert.equal(evil.controller.status().login.status, 'error');
+  assert.equal((await evil.controller.status()).login.status, 'error');
   await evil.controller.close();
 });
 
@@ -123,7 +124,7 @@ test('stop aborts and joins in-flight QR poll; close is idempotent', async () =>
   await f.controller.action('login');
   await entered.promise;
   await f.controller.action('stop');
-  assert.equal(f.controller.status().login.status, 'idle');
+  assert.equal((await f.controller.status()).login.status, 'idle');
   const first = f.controller.close();
   assert.strictEqual(first, f.controller.close());
   await first;
@@ -136,12 +137,12 @@ test('invalid login grant never reaches credentials; expired QR has no pending l
   await invalid.controller.action('login');
   await invalid.controller.loginTask;
   assert.equal(invalid.records.size, 0);
-  assert.equal(invalid.controller.status().login.status, 'error');
+  assert.equal((await invalid.controller.status()).login.status, 'error');
   await invalid.controller.close();
   const expired = fixture({ statuses: [{ status: 'expired' }] });
   await expired.controller.action('login');
   await expired.controller.loginTask;
-  assert.equal(expired.controller.status().login.status, 'expired');
+  assert.equal((await expired.controller.status()).login.status, 'expired');
   await expired.controller.close();
 });
 
@@ -181,4 +182,48 @@ test('failing bridge startup disposes bridge and interactions without enabling s
   assert.equal(calls.stops, 1);
   assert.equal(calls.interactions, 1);
   await controller.close();
+});
+
+test('status reports the bound Session title and caches the lookup', async () => {
+  let lists = 0;
+  const items = [{ sessionId: 'session-a', projections: { values: { title: '  修登录  ' } } }];
+  const f = fixture({ sessionController: { async list() { lists++; return items; } } });
+  f.state.sessionId = 'session-a';
+  const status = await f.controller.status();
+  assert.equal(status.sessionId, 'session-a');
+  assert.equal(status.sessionTitle, '修登录');
+  assert.equal(lists, 1);
+  // The settings page polls every second; the second poll must reuse the cache.
+  await f.controller.status();
+  assert.equal(lists, 1);
+  items[0].projections.values.title = '已改名';
+  f.controller.titleCache = null;
+  assert.equal((await f.controller.status()).sessionTitle, '已改名');
+  await f.controller.close();
+});
+
+test('status tolerates missing, deleted, untitled, and failing Session lookups', async () => {
+  const plain = fixture();
+  plain.state.sessionId = 'session-x';
+  assert.equal((await plain.controller.status()).sessionTitle, null);
+  await plain.controller.close();
+
+  const deleted = fixture({ sessionController: { async list() { return []; } } });
+  deleted.state.sessionId = 'session-gone';
+  assert.equal((await deleted.controller.status()).sessionTitle, null);
+  await deleted.controller.close();
+
+  const untitled = fixture({ sessionController: { async list() { return [{ sessionId: 'session-z' }]; } } });
+  untitled.state.sessionId = 'session-z';
+  assert.equal((await untitled.controller.status()).sessionTitle, null);
+  await untitled.controller.close();
+
+  let lists = 0;
+  const failing = fixture({ sessionController: { async list() { lists++; throw new Error('runtime down'); } } });
+  failing.state.sessionId = 'session-y';
+  const status = await failing.controller.status();
+  assert.equal(status.sessionId, 'session-y');
+  assert.equal(status.sessionTitle, null);
+  assert.equal(lists, 1);
+  await failing.controller.close();
 });

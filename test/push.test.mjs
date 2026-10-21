@@ -167,7 +167,7 @@ test('Agent disposal removes full schema; another Agent can load independently',
 test('controller status omits delivery backlog and uncertain counts', async t => {
   const {store, controller} = await fixture(t);
   await store.enqueue({id:'pending',userId:'owner',contextToken:'token',text:'pending'});
-  const status = controller.status();
+  const status = await controller.status();
   assert.equal(Object.hasOwn(status, 'outboxDepth'), false);
   assert.equal(Object.hasOwn(status, 'uncertainCount'), false);
   assert.equal(status.bound, true);

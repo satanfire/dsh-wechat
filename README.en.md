@@ -26,7 +26,7 @@ Do not run multiple WeChat bridges using the same bot account.
 
 ## Connect and use
 
-Open **Settings → WeChat**, select **Scan to connect**, confirm on your phone, then select **Start**. Send the bot a text message. The bridge creates a dedicated Harness session; its ID is visible in settings and its conversation can be opened in Web. Use `/list` to see switchable sessions, then `/switch NUMBER` to send later messages to another one.
+Open **Settings → WeChat**, select **Scan to connect**, confirm on your phone, then select **Start**. Send the bot a text message. The bridge creates a dedicated Harness session; settings shows its title, and hovering reveals the full session ID. The conversation can be opened in Web. Use `/list` to see switchable sessions, then `/switch NUMBER` to send later messages to another one.
 
 | Text command | Effect |
 | --- | --- |

@@ -10,6 +10,8 @@ import { validatePush, enqueuePush, isContextToken } from './push.mjs';
 const LOGIN_MS = 240_000;
 const LOGIN_TIMEOUT = Symbol('login-timeout');
 const MAX_REDIRECTS = 3;
+/** The settings page polls status every second; allow one title lookup per window. */
+const TITLE_CACHE_MS = 5_000;
 const credentialKey = (profile) => `dsh-wechat/${profile}`;
 
 function cleanString(value, name, maxLength) {
@@ -58,12 +60,42 @@ export class Controller {
     this.tail = Promise.resolve();
     this.closed = false;
     this.closeTask = null;
+    this.titleCache = null;
   }
 
-  status() {
+  /**
+   * Status plus the readable title of the bound Session. The settings page
+   * shows that title instead of the raw Session id, so this method is async:
+   * the title comes from `sessionController.list`, which walks every persisted
+   * Session. `TITLE_CACHE_MS` keeps the once-per-second poll cheap.
+   */
+  async status() {
     const s = this.store.snapshot();
     return { connected: !!this.bridge?.connected, enabled: s.enabled, sessionId: s.sessionId,
+      sessionTitle: await this.#sessionTitle(s.sessionId),
       error: this.error || this.bridge?.error || null, login: this.login, bound: !!s.binding };
+  }
+
+  /** Durable title projection of the bound Session; null when absent or unknown. */
+  async #sessionTitle(sessionId) {
+    if (!sessionId) return null;
+    const cached = this.titleCache;
+    if (cached?.sessionId === sessionId && Date.now() - cached.at < TITLE_CACHE_MS) return cached.title;
+    let title = null;
+    try {
+      const { list } = this.ctx.sessionController ?? {};
+      if (typeof list === 'function') {
+        const items = await list.call(this.ctx.sessionController, {});
+        const summary = Array.isArray(items) ? items.find(item => item?.sessionId === sessionId) : null;
+        const value = summary?.projections?.values?.title;
+        if (typeof value === 'string' && value.trim()) title = value.trim();
+      }
+    } catch {
+      // A failed lookup must not break the settings page; keep the last title.
+      title = cached?.sessionId === sessionId ? cached.title : null;
+    }
+    this.titleCache = { sessionId, at: Date.now(), title };
+    return title;
   }
 
   enqueueText(text, { sessionId, callId, signal } = {}) {
