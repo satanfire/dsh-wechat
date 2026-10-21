@@ -85,8 +85,10 @@ export class Controller {
     try {
       const { list } = this.ctx.sessionController ?? {};
       if (typeof list === 'function') {
-        const items = await list.call(this.ctx.sessionController, {});
-        const summary = Array.isArray(items) ? items.find(item => item?.sessionId === sessionId) : null;
+        // `sessionController.list` answers `{ items }`; accept a bare list too.
+        const listed = await list.call(this.ctx.sessionController, {});
+        const items = Array.isArray(listed) ? listed : Array.isArray(listed?.items) ? listed.items : [];
+        const summary = items.find(item => item?.sessionId === sessionId);
         const value = summary?.projections?.values?.title;
         if (typeof value === 'string' && value.trim()) title = value.trim();
       }

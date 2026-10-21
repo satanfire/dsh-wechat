@@ -187,7 +187,8 @@ test('failing bridge startup disposes bridge and interactions without enabling s
 test('status reports the bound Session title and caches the lookup', async () => {
   let lists = 0;
   const items = [{ sessionId: 'session-a', projections: { values: { title: '  修登录  ' } } }];
-  const f = fixture({ sessionController: { async list() { lists++; return items; } } });
+  // `sessionController.list` answers `{ items }`, not a bare array.
+  const f = fixture({ sessionController: { async list() { lists++; return { items }; } } });
   f.state.sessionId = 'session-a';
   const status = await f.controller.status();
   assert.equal(status.sessionId, 'session-a');
@@ -208,15 +209,21 @@ test('status tolerates missing, deleted, untitled, and failing Session lookups',
   assert.equal((await plain.controller.status()).sessionTitle, null);
   await plain.controller.close();
 
-  const deleted = fixture({ sessionController: { async list() { return []; } } });
+  const deleted = fixture({ sessionController: { async list() { return { items: [] }; } } });
   deleted.state.sessionId = 'session-gone';
   assert.equal((await deleted.controller.status()).sessionTitle, null);
   await deleted.controller.close();
 
-  const untitled = fixture({ sessionController: { async list() { return [{ sessionId: 'session-z' }]; } } });
+  const untitled = fixture({ sessionController: { async list() { return { items: [{ sessionId: 'session-z' }] }; } } });
   untitled.state.sessionId = 'session-z';
   assert.equal((await untitled.controller.status()).sessionTitle, null);
   await untitled.controller.close();
+
+  // A bare list stays accepted even though the Host contract wraps it in `items`.
+  const bare = fixture({ sessionController: { async list() { return [{ sessionId: 'session-b', projections: { values: { title: '裸列表' } } }]; } } });
+  bare.state.sessionId = 'session-b';
+  assert.equal((await bare.controller.status()).sessionTitle, '裸列表');
+  await bare.controller.close();
 
   let lists = 0;
   const failing = fixture({ sessionController: { async list() { lists++; throw new Error('runtime down'); } } });
