@@ -1,6 +1,6 @@
 {
   "name": "@satanfire/dsh-wechat",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "icon": "./icon.svg",
   "description": "Owner-bound WeChat iLink bridge for DeepSeek Harness Web",
   "type": "module",

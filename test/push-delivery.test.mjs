@@ -58,7 +58,7 @@ test('a rejected push is retried until the provider accepts it',async t=>{
   let sends=0;
   const f=await fixture(t,async payload=>{
     sends++;
-    if(sends<3) throw Object.assign(new Error('provider rejected'),{code:'provider-rejected',providerCode:'-14'});
+    if(sends<3) throw Object.assign(new Error('provider rejected'),{code:'provider-rejected',providerCode:'-1'});
     sent.push(payload);
   });
   const result=await f.controller.enqueueText('重试后送达',{sessionId:'web-session',callId:'retry'});
@@ -74,7 +74,7 @@ test('a rejected push is retried until the provider accepts it',async t=>{
 
 test('a push that keeps failing is retried on every slot, then discarded',async t=>{
   let sends=0;
-  const f=await fixture(t,async()=>{sends++;throw Object.assign(new Error('provider rejected'),{code:'provider-rejected',providerCode:'-14'});},{sendRetryDelaysMs:[10,10,10]});
+  const f=await fixture(t,async()=>{sends++;throw Object.assign(new Error('provider rejected'),{code:'provider-rejected',providerCode:'-1'});},{sendRetryDelaysMs:[10,10,10]});
   const result=await f.controller.enqueueText('永远失败',{sessionId:'web-session',callId:'exhausted'});
   await until(()=>f.store.snapshot().seen.includes(`\0outbox-failed\0${result.id}`));
   assert.equal(sends,4);
@@ -92,7 +92,7 @@ test('a retry uses the freshest bound context token',async t=>{
     tokens.push(payload.contextToken);
     if(tokens.length===1){
       await store.update(s=>{s.binding.context.token='fresh-context';});
-      throw Object.assign(new Error('context expired'),{code:'provider-rejected',providerCode:'-14'});
+      throw Object.assign(new Error('context expired'),{code:'provider-rejected',providerCode:'-1'});
     }
   });
   store=f.store;
@@ -100,4 +100,32 @@ test('a retry uses the freshest bound context token',async t=>{
   await until(()=>f.store.snapshot().seen.includes(`\0outbox\0${result.id}`));
   assert.deepEqual(tokens,['test-context','fresh-context']);
   assert.equal(tokens.length,2);
+});
+
+test('a stale context is retried once without the token, so an idle peer still gets the push',async t=>{
+  const calls=[];
+  const f=await fixture(t,async payload=>{
+    calls.push(payload.contextToken);
+    if(payload.contextToken) throw Object.assign(new Error('prepare failed'),{code:'provider-rejected',providerCode:'-2'});
+  });
+  const result=await f.controller.enqueueText('无 token 兜底',{sessionId:'web-session',callId:'stale'});
+  await until(()=>f.store.snapshot().seen.includes(`\0outbox\0${result.id}`));
+  assert.equal(calls.length,2);
+  assert.equal(calls[0],'test-context');
+  assert.equal(calls[1],'');
+  assert.deepEqual(f.store.snapshot().outbox,[]);
+  assert.equal(f.bridge.error,null);
+});
+
+test('a tokenless fallback that also fails is retried on the schedule, then discarded',async t=>{
+  let sends=0;
+  const f=await fixture(t,async()=>{
+    sends++;
+    throw Object.assign(new Error('prepare failed'),{code:'provider-rejected',providerCode:'-2'});
+  },{sendRetryDelaysMs:[10,10,10]});
+  const result=await f.controller.enqueueText('会话未就绪',{sessionId:'web-session',callId:'not-ready'});
+  await until(()=>f.store.snapshot().seen.includes(`\0outbox-failed\0${result.id}`));
+  assert.equal(sends,8);
+  assert.deepEqual(f.store.snapshot().outbox,[]);
+  assert.equal(f.bridge.error,'send-failed');
 });

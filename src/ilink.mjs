@@ -123,6 +123,12 @@ function required(value, name) {
   return value;
 }
 
+/** Optional context_token field: omitted sends still work as a degraded fallback. */
+function contextField(contextToken) {
+  if (typeof contextToken !== 'string' || !contextToken.trim()) return {};
+  return { context_token: contextToken };
+}
+
 function providerCode(value) {
   return (typeof value === 'number' && Number.isSafeInteger(value))
     || (typeof value === 'string' && /^-?\d{1,12}$/.test(value)) ? String(value) : undefined;
@@ -280,7 +286,6 @@ export class ILinkClient {
 
   sendText({ userId, contextToken, text, clientId }, signal) {
     required(userId, 'userId');
-    required(contextToken, 'contextToken');
     required(text, 'text');
     required(clientId, 'clientId');
     return this.#retry('/ilink/bot/sendmessage', {
@@ -288,11 +293,27 @@ export class ILinkClient {
       body: {
         msg: {
           from_user_id: '', to_user_id: userId, client_id: clientId,
-          message_type: 2, message_state: 2, context_token: contextToken,
+          message_type: 2, message_state: 2, ...contextField(contextToken),
           item_list: [{ type: 1, text_item: { text } }],
         },
         base_info: { channel_version: '2.0.0' },
       },
+    });
+  }
+
+  /** Tell iLink this client started; it re-registers the bot session. */
+  notifyStart(signal) {
+    return this.#retry('/ilink/bot/msg/notifystart', {
+      method: 'POST', authenticated: true, signal, timeoutMs: this.timeoutMs,
+      body: { base_info: { channel_version: '2.0.0' } },
+    });
+  }
+
+  /** Tell iLink this client stopped. */
+  notifyStop(signal) {
+    return this.#retry('/ilink/bot/msg/notifystop', {
+      method: 'POST', authenticated: true, signal, timeoutMs: this.timeoutMs,
+      body: { base_info: { channel_version: '2.0.0' } },
     });
   }
 
@@ -420,7 +441,6 @@ export class ILinkClient {
 
   async sendMedia({ userId, contextToken, clientId, kind, name, bytes }, signal) {
     required(userId, 'userId');
-    required(contextToken, 'contextToken');
     required(clientId, 'clientId');
     if (kind !== 'image' && kind !== 'file' && kind !== 'video') {
       throw new TypeError('Unsupported media kind');
@@ -446,7 +466,7 @@ export class ILinkClient {
     return this.#retry('/ilink/bot/sendmessage', {
       method: 'POST', authenticated: true, signal, timeoutMs: this.timeoutMs, send: true,
       body: { msg: { from_user_id: '', to_user_id: userId, client_id: clientId,
-        message_type: 2, message_state: 2, context_token: contextToken, item_list: [item] },
+        message_type: 2, message_state: 2, ...contextField(contextToken), item_list: [item] },
       base_info: { channel_version: '2.0.0' } },
     });
   }

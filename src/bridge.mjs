@@ -11,6 +11,8 @@ const errorName = error => typeof error?.code === 'string' ? error.code : 'bridg
 const sessionFor = id => `session-${createHash('sha256').update(id).digest('hex').slice(0, 32)}`;
 const isAuthFailure = error => error?.providerCode === '-14' || error?.providerCode === '401'
   || error?.status === 401 || error?.status === 403;
+/** iLink refuses a stale conversation context with ret -2 ("prepare failed") or -14. */
+const isSessionStale = error => error?.providerCode === '-2' || error?.providerCode === '-14';
 
 const canConfirm = item => typeof item.contextToken === 'string' && !!item.contextToken.trim()
   && !/[\r\n\0]/.test(item.contextToken)
@@ -122,6 +124,7 @@ export class Bridge {
       this.#timer = setInterval(() => { this.#handleControls(); this.#wake(); }, 250);
       this.#timer.unref?.();
       this.#pollTask = this.#poll(this.#abort.signal);
+      this.#notifyStart(this.#abort.signal);
       this.#wake(); this.#handleControls();
     } catch (error) { clearInterval(this.#timer); this.#running = false; throw error; }
   }
@@ -132,6 +135,7 @@ export class Bridge {
       clearInterval(this.#timer);
       this.#abort.abort();
       await Promise.allSettled([this.#pollTask, this.#workTask, this.#sendTask, ...this.#controlTasks]);
+      this.#notifyStop();
       this.#connected = false;
       await this.#store.update(state => {
         for (const row of state.outbox) if (row.status === 'sending') row.status = 'failed';
@@ -291,6 +295,20 @@ export class Bridge {
       throw error;
     }
   }
+  /** Best-effort session registration; a failed notice must not break startup. */
+  #notifyStart(signal) {
+    const notify = this.#client.notifyStart;
+    if (typeof notify !== 'function') return;
+    Promise.resolve().then(() => notify.call(this.#client, signal)).catch(() => {});
+  }
+
+  /** Best-effort session close notice. */
+  #notifyStop() {
+    const notify = this.#client.notifyStop;
+    if (typeof notify !== 'function') return;
+    Promise.resolve().then(() => notify.call(this.#client)).catch(() => {});
+  }
+
   #wake() {
     if (!this.#running || this.#closing) return;
     if (!this.#workTask) {
@@ -455,9 +473,7 @@ export class Bridge {
         && !(Number.isSafeInteger(row.nextAttemptAt) && row.nextAttemptAt > now));
       if (!item) return;
       const contextToken = this.#contextTokenFor(item);
-      try {
-        await this.#store.update(state => { state.outbox.find(r => r.id === item.id).status = 'sending'; });
-        if (signal.aborted) return;
+      const deliver = async (token) => {
         if (item.media) {
           if (!this.attachments) throw new Error('Attachment service unavailable');
           const buffers = []; let size = 0;
@@ -466,11 +482,23 @@ export class Bridge {
             if (size > 50 * 1024 * 1024) throw new RangeError('Outbound media too large');
             buffers.push(chunk);
           }
-          await this.#client.sendMedia({ userId: item.userId, contextToken,
+          await this.#client.sendMedia({ userId: item.userId, contextToken: token,
             clientId: item.id, kind: item.media.kind, name: item.media.name, bytes: Buffer.concat(buffers, size) }, signal);
         } else {
-          await this.#client.sendText({ userId: item.userId, contextToken,
+          await this.#client.sendText({ userId: item.userId, contextToken: token,
             text: item.text, clientId: item.id }, signal);
+        }
+      };
+      try {
+        await this.#store.update(state => { state.outbox.find(r => r.id === item.id).status = 'sending'; });
+        if (signal.aborted) return;
+        try {
+          await deliver(contextToken);
+        } catch (error) {
+          /* iLink keeps accepting a tokenless degraded send after the context
+             goes stale; that is what lets a cron push reach an idle peer. */
+          if (!contextToken || !isSessionStale(error)) throw error;
+          await deliver('');
         }
         if (signal.aborted) return;
         await this.#store.update(state => { const row = state.outbox.find(r => r.id === item.id); if (row) row.status = 'sent'; });
