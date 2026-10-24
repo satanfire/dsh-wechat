@@ -362,6 +362,44 @@ test('interrupted sending is not automatically replayed after restart', async t 
   await f.bridge.stop();
 });
 
+test('a session-not-ready push is held, then delivered after the owner\'s next inbound', async t => {
+  const f = await fixture(t);
+  let blocked = true;
+  const sent = [];
+  f.client.sendText = async payload => {
+    if (blocked) throw Object.assign(new Error('prepare failed'), { code: 'provider-rejected', providerCode: '-2' });
+    sent.push(payload);
+  };
+  await f.store.enqueue({ id: 'wechat-push-held', userId: 'owner', contextToken: 'ctx', text: 'held' });
+  await f.bridge.start();
+  await until(() => f.store.snapshot().outbox.some(row => row.id === 'wechat-push-held' && row.status === 'held'));
+  assert.equal(f.bridge.error, 'send-held');
+  assert.equal(f.store.snapshot().seen.includes('\0outbox-failed\0wechat-push-held'), false);
+  blocked = false;
+  f.push(message('in-1', 'hello'));
+  await until(() => f.store.snapshot().seen.includes('\0outbox\0wechat-push-held'));
+  assert.ok(sent.some(item => item.text === 'held'));
+  assert.equal(f.store.snapshot().outbox.some(row => row.id === 'wechat-push-held'), false);
+});
+
+test('a held push older than the TTL is dropped on restart', async t => {
+  const f = await fixture(t);
+  f.client.sendText = async () => {
+    throw Object.assign(new Error('prepare failed'), { code: 'provider-rejected', providerCode: '-2' });
+  };
+  await f.store.enqueue({ id: 'wechat-push-stale', userId: 'owner', contextToken: 'ctx', text: 'old' });
+  await f.bridge.start();
+  await until(() => f.store.snapshot().outbox.some(row => row.id === 'wechat-push-stale' && row.status === 'held'));
+  await f.store.update(state => {
+    const row = state.outbox.find(item => item.id === 'wechat-push-stale');
+    row.heldAt = Date.now() - 25 * 60 * 60 * 1000;
+  });
+  await f.bridge.stop();
+  await f.bridge.start();
+  await until(() => f.store.snapshot().seen.includes('\0outbox-failed\0wechat-push-stale'));
+  assert.equal(f.store.snapshot().outbox.some(row => row.id === 'wechat-push-stale'), false);
+});
+
 test('outbound failure is discarded, never sent again automatically', async t => {
   const f = await fixture(t);
   await f.store.enqueue({ id: 'out-one', userId: 'owner', contextToken: 'ctx', text: 'hi' });

@@ -22,6 +22,9 @@ const boundedMs = (value, fallback) => Number.isSafeInteger(value) && value > 0 
 const DEFAULT_SEND_RETRY_DELAYS_MS = [5_000, 30_000, 120_000, 360_000, 900_000];
 const MAX_SEND_RETRY_DELAYS = 8;
 const MAX_SEND_RETRY_DELAY_MS = 3_600_000;
+/** iLink blocks bot-initiated sends until the owner messages again. Hold instead of retrying. */
+const HELD_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_HELD = 20;
 
 /** Keep one bounded retry schedule; any invalid plan falls back to the default one. */
 function retryDelays(value) {
@@ -118,6 +121,8 @@ export class Bridge {
         for (const row of state.outbox) {
           if (row.status === 'sending') row.status = 'failed';
           if (row.status === 'queued' && row.id.startsWith('wechat-received-')) row.status = 'cancelled';
+          if (row.status === 'held' && Number.isSafeInteger(row.heldAt)
+            && Date.now() - row.heldAt > HELD_TTL_MS) row.status = 'failed';
         }
         for (const row of state.inbox) if (row.status === 'control-pending') row.status = 'failed';
       });
@@ -153,7 +158,10 @@ export class Bridge {
         if (signal.aborted) break;
         if (!Array.isArray(batch?.msgs) || typeof batch.get_updates_buf !== 'string') throw Error('Invalid updates');
         await this.#store.ingest(batch.msgs, batch.get_updates_buf, this.#ownerId);
-        this.#connected = true; this.#error = null; failures = 0;
+        await this.#releaseHeld();
+        this.#connected = true;
+        if (this.#error !== 'send-held') this.#error = null;
+        failures = 0;
         if (signal.aborted) break;
         this.#handleControls(); this.#wake();
         // Avoid a busy loop if the provider returns an empty batch immediately.
@@ -459,11 +467,46 @@ export class Bridge {
     return item.contextToken;
   }
 
+  /** Park one row until the owner messages the bot again, bounded by count. */
+  async #hold(item) {
+    const now = Date.now();
+    await this.#store.update(state => {
+      const row = state.outbox.find(r => r.id === item.id);
+      if (!row) return;
+      row.status = 'held';
+      if (!Number.isSafeInteger(row.heldAt)) row.heldAt = now;
+      row.attempts = 0;
+      row.lastError = 'session-not-ready';
+      delete row.nextAttemptAt;
+      const held = state.outbox.filter(r => r.status === 'held');
+      for (const old of held.slice(0, Math.max(0, held.length - MAX_HELD))) old.status = 'failed';
+    });
+  }
+
+  /** After an inbound message refreshes the session, queue held rows again. */
+  async #releaseHeld() {
+    if (!this.#store.snapshot().outbox.some(row => row.status === 'held')) return;
+    const now = Date.now();
+    await this.#store.update(state => {
+      for (const row of state.outbox) {
+        if (row.status !== 'held') continue;
+        const heldAt = Number.isSafeInteger(row.heldAt) ? row.heldAt : now;
+        if (now - heldAt > HELD_TTL_MS) { row.status = 'failed'; continue; }
+        row.status = 'queued';
+        row.attempts = 0;
+        delete row.heldAt;
+        delete row.nextAttemptAt;
+      }
+    });
+    this.#wake();
+  }
+
   /**
    * Deliver queued rows in order. A failed send is retried on the configured
    * schedule, reusing the same client id and the newest bound context, so a
-   * refreshed WeChat window can still carry the message. Uncertain failures are
-   * dropped at once: the provider may already hold the message.
+   * refreshed WeChat window can still carry the message. A session-not-ready
+   * refusal is held for the owner's next inbound instead; uncertain failures
+   * are dropped at once because the provider may already hold the message.
    */
   async #sendLoop() {
     const signal = this.#abort.signal;
@@ -502,8 +545,17 @@ export class Bridge {
         }
         if (signal.aborted) return;
         await this.#store.update(state => { const row = state.outbox.find(r => r.id === item.id); if (row) row.status = 'sent'; });
+        if (this.#error === 'send-held') this.#error = null;
       } catch (error) {
         if (signal.aborted) return;
+        /* iLink refuses bot-initiated sends until the owner's next message; a
+           tokenless retry already ran above. Keep the row and flush it after
+           that inbound instead of burning attempts or the daily quota. */
+        if (error?.code === 'provider-rejected' && error?.providerCode === '-2') {
+          await this.#hold(item);
+          this.#error = 'send-held';
+          continue;
+        }
         const attempts = (Number.isSafeInteger(item.attempts) ? item.attempts : 0) + 1;
         const waitMs = this.#retryDelays[attempts - 1];
         const retry = item.id.startsWith('wechat-push-') && error?.uncertain !== true

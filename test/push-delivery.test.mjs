@@ -117,15 +117,16 @@ test('a stale context is retried once without the token, so an idle peer still g
   assert.equal(f.bridge.error,null);
 });
 
-test('a tokenless fallback that also fails is retried on the schedule, then discarded',async t=>{
+test('a session-not-ready push is held instead of retried, ready for the next inbound',async t=>{
   let sends=0;
   const f=await fixture(t,async()=>{
     sends++;
     throw Object.assign(new Error('prepare failed'),{code:'provider-rejected',providerCode:'-2'});
   },{sendRetryDelaysMs:[10,10,10]});
   const result=await f.controller.enqueueText('会话未就绪',{sessionId:'web-session',callId:'not-ready'});
-  await until(()=>f.store.snapshot().seen.includes(`\0outbox-failed\0${result.id}`));
-  assert.equal(sends,8);
-  assert.deepEqual(f.store.snapshot().outbox,[]);
-  assert.equal(f.bridge.error,'send-failed');
+  await until(()=>f.store.snapshot().outbox.some(row=>row.id===result.id&&row.status==='held'));
+  assert.equal(sends,2); // one attempt with the token, one tokenless retry, then parked
+  assert.equal(f.store.snapshot().seen.includes(`\0outbox-failed\0${result.id}`),false);
+  assert.equal(f.store.snapshot().seen.includes(`\0outbox\0${result.id}`),false);
+  assert.equal(f.bridge.error,'send-held');
 });
