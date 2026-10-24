@@ -16,6 +16,24 @@ const canConfirm = item => typeof item.contextToken === 'string' && !!item.conte
   && !/[\r\n\0]/.test(item.contextToken)
   && typeof item.text === 'string' && !item.text.trimStart().startsWith('/');
 const boundedMs = (value, fallback) => Number.isSafeInteger(value) && value > 0 && value <= 60_000 ? value : fallback;
+/** Wait before each automatic retry of a failed outbound send; one entry per retry. */
+const DEFAULT_SEND_RETRY_DELAYS_MS = [5_000, 30_000, 120_000, 360_000, 900_000];
+const MAX_SEND_RETRY_DELAYS = 8;
+const MAX_SEND_RETRY_DELAY_MS = 3_600_000;
+
+/** Keep one bounded retry schedule; any invalid plan falls back to the default one. */
+function retryDelays(value) {
+  if (!Array.isArray(value) || value.length > MAX_SEND_RETRY_DELAYS) return DEFAULT_SEND_RETRY_DELAYS_MS;
+  const delays = value.filter(ms => Number.isSafeInteger(ms) && ms >= 1 && ms <= MAX_SEND_RETRY_DELAY_MS);
+  return delays.length === value.length ? delays : DEFAULT_SEND_RETRY_DELAYS_MS;
+}
+
+/** Failure label kept on a row: error code plus provider code when the provider named one. */
+function sendFailure(error) {
+  const code = errorName(error);
+  const provider = error?.providerCode === undefined ? '' : `:${String(error.providerCode).slice(0, 32)}`;
+  return `${code}${provider}`.slice(0, 80);
+}
 
 /** Optional feedback: bounded, serial, and never delays task admission. */
 function typingFeedback(client, item, parentSignal, intervalMs, timeoutMs, state) {
@@ -73,8 +91,9 @@ export class Bridge {
   #abort; #pollTask; #workTask; #sendTask; #timer; #controlTasks = new Set();
   #closing; #running = false; #connected = false; #error = null;
   #typingIntervalMs; #typingTimeoutMs; #typingState = { active: null }; #sessionList = null;
+  #retryDelays;
 
-  constructor({ store, client, harness, ownerId, interactions, media, outbound, attachments, typingIntervalMs = 8000, typingTimeoutMs = 3000 }) {
+  constructor({ store, client, harness, ownerId, interactions, media, outbound, attachments, typingIntervalMs = 8000, typingTimeoutMs = 3000, sendRetryDelaysMs }) {
     if (!store || !client || !harness || !ownerId) throw new TypeError('Bridge dependencies required');
     this.#store = store; this.#client = client; this.#harness = harness;
     this.#ownerId = ownerId; this.#interactions = interactions;
@@ -83,6 +102,7 @@ export class Bridge {
     this.attachments = attachments;
     this.#typingIntervalMs = boundedMs(typingIntervalMs, 8000);
     this.#typingTimeoutMs = boundedMs(typingTimeoutMs, 3000);
+    this.#retryDelays = retryDelays(sendRetryDelaysMs);
   }
   get connected() { return this.#connected; }
   get error() { return this.#error; }
@@ -412,11 +432,29 @@ export class Bridge {
       try { await stopTyping(); } finally { await retireOutbound?.(); }
     }
   }
+  /** Freshest bound context token for an outbox row; older rows keep a stale one. */
+  #contextTokenFor(item) {
+    const binding = this.#store.snapshot().binding;
+    const token = binding?.context?.token;
+    if (binding?.ownerId === item.userId && typeof token === 'string' && token.trim()
+      && !/[\r\n\0]/.test(token)) return token;
+    return item.contextToken;
+  }
+
+  /**
+   * Deliver queued rows in order. A failed send is retried on the configured
+   * schedule, reusing the same client id and the newest bound context, so a
+   * refreshed WeChat window can still carry the message. Uncertain failures are
+   * dropped at once: the provider may already hold the message.
+   */
   async #sendLoop() {
     const signal = this.#abort.signal;
     while (!signal.aborted) {
-      const item = this.#store.snapshot().outbox.find(r => r.status === 'queued');
+      const now = Date.now();
+      const item = this.#store.snapshot().outbox.find(row => row.status === 'queued'
+        && !(Number.isSafeInteger(row.nextAttemptAt) && row.nextAttemptAt > now));
       if (!item) return;
+      const contextToken = this.#contextTokenFor(item);
       try {
         await this.#store.update(state => { state.outbox.find(r => r.id === item.id).status = 'sending'; });
         if (signal.aborted) return;
@@ -428,18 +466,29 @@ export class Bridge {
             if (size > 50 * 1024 * 1024) throw new RangeError('Outbound media too large');
             buffers.push(chunk);
           }
-          await this.#client.sendMedia({ userId: item.userId, contextToken: item.contextToken,
+          await this.#client.sendMedia({ userId: item.userId, contextToken,
             clientId: item.id, kind: item.media.kind, name: item.media.name, bytes: Buffer.concat(buffers, size) }, signal);
         } else {
-          await this.#client.sendText({ userId: item.userId, contextToken: item.contextToken,
+          await this.#client.sendText({ userId: item.userId, contextToken,
             text: item.text, clientId: item.id }, signal);
         }
         if (signal.aborted) return;
-        await this.#store.update(state => { state.outbox.find(r => r.id === item.id).status = 'sent'; });
+        await this.#store.update(state => { const row = state.outbox.find(r => r.id === item.id); if (row) row.status = 'sent'; });
       } catch (error) {
         if (signal.aborted) return;
-        await this.#store.update(state => { state.outbox.find(r => r.id === item.id).status = 'failed'; });
-        this.#error = 'send-failed';
+        const attempts = (Number.isSafeInteger(item.attempts) ? item.attempts : 0) + 1;
+        const waitMs = this.#retryDelays[attempts - 1];
+        const retry = item.id.startsWith('wechat-push-') && error?.uncertain !== true
+          && waitMs !== undefined;
+        await this.#store.update(state => {
+          const row = state.outbox.find(r => r.id === item.id);
+          if (!row) return;
+          row.attempts = attempts;
+          row.lastError = sendFailure(error);
+          if (retry) { row.status = 'queued'; row.nextAttemptAt = Date.now() + waitMs; }
+          else { row.status = 'failed'; delete row.nextAttemptAt; }
+        });
+        if (!retry) this.#error = 'send-failed';
       }
     }
   }

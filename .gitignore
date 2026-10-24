@@ -12,3 +12,4 @@ store.json
 store.lock*
 credentials*.json
 .tmp*/
+.codegraph/

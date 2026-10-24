@@ -43,7 +43,7 @@ export function enqueuePush(state, { id, text, sessionId, signal }) {
 export function sendTextDefinition(controller) {
   return {
     name: 'wechat_send_text',
-    description: '向用户绑定的微信发送文字通知，仅在用户要求微信消息或通知时使用。返回消息 ID 和状态；queued 表示等待发送，失败消息会丢弃且不会自动重发。',
+    description: '向用户绑定的微信发送文字通知，仅在用户要求微信消息或通知时使用。返回消息 ID 和状态；queued 表示已入队；发送失败会自动重试几次，仍失败才丢弃。',
     parameters: {
       type: 'object',
       properties: { text: { type: 'string', description: 'Message to send, 1–800 characters. For composed notifications use a short title, blank lines, short paragraphs and • bullets; WeChat does not render Markdown headings, bold or tables. Preserve user-supplied verbatim text. Split longer messages at paragraph boundaries.' } },

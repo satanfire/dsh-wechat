@@ -56,7 +56,8 @@ Phone approvals include the actual tool arguments and verify durable WeChat requ
 - Files/videos: 50 MiB each and combined per message, at most eight attachments. Videos enter as files, not model video frames.
 - `wechat_send_media({path,kind})` sends a workspace attachment from a verified WeChat turn. External paths and escaping symlinks are refused. Videos are delivered as file attachments.
 - Ask any ordinary Harness session to notify your WeChat when done. It loads `load_wechat_tools({})`, then uses its scoped `wechat_send_text({text})`. Text is 1–800 Unicode characters; the recipient is always the bound owner.
-- `queued` 仅表示已落盘，不等于送达。`sent` 仅表示微信服务接受，不代表手机已读。`failed` 表示消息已丢弃，可能是明确失败或结果不明；失败消息的去重结果不会误报为 `sent`。
+- `queued` only means persisted, not delivered. `sent` only means the WeChat service accepted the message, not that the phone read it. `failed` means the message was dropped, either after a clear failure or an unknown result; a failed dedup result is never reported as `sent`.
+- A failed push is retried up to five times (after 5 s, 30 s, 2 min, 6 min and 15 min), each attempt using the freshest owner context; only then is it dropped. Uncertain outcomes are not retried, so a message the service may already hold is never duplicated.
 
 Push uses the latest owner conversation context. Send the bot a fresh phone message when context is missing or expired; indefinite offline proactive delivery is not promised. WeChat text does not render Markdown headings, bold, or tables.
 
