@@ -5,6 +5,7 @@ import { HarnessAdapter } from './harness.mjs';
 import { Interactions } from './interactions.mjs';
 import { MediaHandler } from './media.mjs';
 import { enableOutbound } from './outbound.mjs';
+import { inspectSession } from './session-inspect.mjs';
 import { validatePush, enqueuePush, isContextToken } from './push.mjs';
 
 const LOGIN_MS = 240_000;
@@ -198,7 +199,7 @@ export class Controller {
         media: this.ctx.fileUploads ? new MediaHandler({ client, fileUploads: this.ctx.fileUploads }) : undefined,
         attachments: this.ctx.attachments,
         outbound: this.ctx.attachments ? async (sessionId, requestId) => {
-          const { meta } = await this.ctx.sessionController.inspect(sessionId);
+          const { meta } = await inspectSession(this.ctx, sessionId);
           return enableOutbound(this.ctx, { store: this.store, cwd: meta.cwd ?? this.config.cwd, sessionId, requestId });
         } : undefined,
         interactions: this.interactions });

@@ -1,3 +1,5 @@
+import { inspectSession } from './session-inspect.mjs';
+
 /** Thrown when an incoming request cannot safely be replayed or attributed. */
 export class NeedsReviewError extends Error {
   constructor(message) { super(message); this.name = 'NeedsReviewError'; this.code = 'needsReview'; }
@@ -160,7 +162,7 @@ export class HarnessAdapter {
   }
   cancel(sessionId) { return this.ctx.sessionController.cancel({ sessionId }); }
   async lookupRequest(sessionId, requestId, signal) {
-    const { events } = await this.ctx.sessionController.inspect(sessionId, signal);
+    const { events } = await inspectSession(this.ctx, sessionId, signal);
     return inspectRequest(events, requestId);
   }
   waitForReply(sessionId, requestId, signal) {

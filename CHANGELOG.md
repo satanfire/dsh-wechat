@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.9 — 2026-10-29
+
+- 修复 DSH 0.2.2-alpha.2 下入站消息全部失败：该版本删除了 `sessionController.inspect`，插件在准备阶段读取会话头与事件时抛 `TypeError`，消息被丢弃并回复「任务准备失败，尚未提交给 DSH，消息已丢弃。请重新发送。」。
+- 新增会话读取兼容层：运行时仍有 `sessionController.inspect` 时沿用旧调用；没有时改用 `sessionQuery.observeSession`（live-preferred、冷会话可用）读取同样的 header 与事件，并在读完后释放 observation 租约。
+- 影响范围仅为「你发给机器人的消息」；机器人主动推送（定时提醒）不经过该路径，未受影响。
+- 新增 5 项用例（旧接口优先、回退读取与租约释放、无 signal 选项、双缺失报错、HarnessAdapter 回退查询）；全量 186 项测试通过。
+
 ## 0.5.8 — 2026-10-24
 
 - `ret=-2 prepare failed`（微信暂时不接受机器人主动发送）不再按 5 次重试空转：消息转入 `held` 暂存，等你下次给机器人发消息、会话刷新后自动补发。避免消耗每次互动后约 10 条的发送额度。
