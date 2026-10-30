@@ -110,9 +110,9 @@ test('typing starts while prompt submission is still pending', async t => {
   assert.equal(f.typing.at(-1), false);
 });
 
-test('preparation failure reports not submitted and retires typing without model admission', async t => {
+test('a genuine preparation failure reports not submitted and retires typing', async t => {
   const f = await fixture(t);
-  f.bridge.outbound = async () => { throw new Error('cannot get property fs without inject'); };
+  f.harness.createSession = async () => { throw new Error('resume failed'); };
   await f.bridge.start(); f.push(message('preparation', 'work'));
   await until(() => f.sends.some(x => x.text.includes('尚未提交')));
   assert.equal(f.calls.length, 0);
@@ -122,10 +122,24 @@ test('preparation failure reports not submitted and retires typing without model
   assert.ok(f.typing.includes(true));
   assert.equal(f.typing.at(-1), false);
   assert.equal(f.sends.length, 1);
+  assert.equal(f.bridge.recentFailures[0].severity, 'error');
   await f.bridge.stop();
-  await f.bridge.start(); await sleep(40);
-  assert.equal(f.calls.length, 0);
+});
+
+test('a missing media capability warns but still admits the text and retires typing', async t => {
+  const f = await fixture(t);
+  f.bridge.outbound = async () => { throw new Error('cannot get property fs without inject'); };
+  await f.bridge.start(); f.push(message('capability', 'work'));
+  await until(() => f.sends.some(x => x.text === 'done'));
+  assert.equal(f.calls.length, 1);
+  assert.ok(f.typing.includes(true));
+  assert.equal(f.typing.at(-1), false);
   assert.equal(f.sends.length, 1);
+  const warnings = f.bridge.recentFailures;
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0].severity, 'warning');
+  assert.equal(warnings[0].stage, 'outbound');
+  await f.bridge.stop();
 });
 
 test('heartbeat is serial while waiting and sends typing=false on final completion', async t => {

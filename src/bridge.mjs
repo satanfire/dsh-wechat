@@ -426,12 +426,19 @@ export class Bridge {
       }
     }
   }
-  /** Keep one bounded, inspectable record of a dispatch failure for the settings status. */
-  #recordFailure(item, error) {
+  /**
+   * Keep one bounded, inspectable record of a dispatch failure for the settings status.
+   * @param {object} item - the inbox row under dispatch.
+   * @param {Error} error - the decorated failure.
+   * @param {'error'|'warning'} severity - fatal failure or a degraded-capability notice.
+   * @param {string} [stage] - explicit stage when the error was swallowed.
+   */
+  #recordFailure(item, error, severity = 'error', stage) {
     this.#failures.push({
       at: Date.now(),
       messageId: item.id,
-      stage: error.stage ?? (item.status === 'queued' ? 'prepare' : 'lookup'),
+      severity,
+      stage: stage ?? error.stage ?? (item.status === 'queued' ? 'prepare' : 'lookup'),
       code: error.code ?? null,
       detail: failureDetail(error),
       attempt: item.prepareAttempts ?? 0,
@@ -441,9 +448,29 @@ export class Bridge {
     });
     if (this.#failures.length > MAX_RECORDED_FAILURES) this.#failures.shift();
   }
+  /**
+   * Install the task-scoped media capability when the runtime offers one. The
+   * capability is optional: a stale Session workspace or a resume race must not
+   * discard an otherwise deliverable text message, so a failure is recorded as a
+   * warning and the dispatch continues without `wechat_send_media`.
+   * @param {object} item - the inbox row under dispatch.
+   * @param {string} sessionId - admitted Session identity.
+   * @param {string} requestId - deterministic request identity.
+   * @returns the retire disposer, or undefined when the capability is unavailable.
+   */
+  async #installOutbound(item, sessionId, requestId) {
+    if (!this.outbound) return undefined;
+    try {
+      return await this.outbound(sessionId, requestId);
+    } catch (error) {
+      this.#recordFailure(item, error, 'warning', 'outbound');
+      return undefined;
+    }
+  }
   async #process(item, signal) {
     const requestId = item.requestId ?? `wechat-${item.id}`;
     let retireOutbound;
+    let outboundAttempted = false;
     let stage = item.status === 'queued' ? 'prepare' : 'lookup';
     const stopTyping = typingFeedback(this.#client, item, signal, this.#typingIntervalMs, this.#typingTimeoutMs, this.#typingState);
     try {
@@ -478,7 +505,8 @@ export class Bridge {
         r.status = 'dispatching'; r.requestId = requestId; r.sessionId = sessionId;
       });
       if (signal.aborted) return;
-      if (this.outbound) retireOutbound = await this.outbound(sessionId, requestId);
+      outboundAttempted = true;
+      retireOutbound = await this.#installOutbound(item, sessionId, requestId);
       stage = 'submit';
       await this.#harness.submit(sessionId, requestId, content, signal);
       if (signal.aborted) return;
@@ -499,7 +527,7 @@ export class Bridge {
       }
       await this.#store.update(state => { state.inbox.find(r => r.id === item.id).status = 'submitted'; });
     }
-    if (!retireOutbound && this.outbound) retireOutbound = await this.outbound(sessionId, requestId);
+    if (!retireOutbound && !outboundAttempted) retireOutbound = await this.#installOutbound(item, sessionId, requestId);
     stage = 'wait';
     const reply = await this.#harness.waitForReply(sessionId, requestId, signal);
     await stopTyping();

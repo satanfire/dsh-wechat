@@ -511,17 +511,20 @@ for (const uncertain of [false, true]) {
   });
 }
 
-test('preparation failure drops duplicate ID but later input still completes', async t => {
+test('media capability failure warns, admits the message, and still dedups the retry', async t => {
   const f = await fixture(t);
   let fail = true;
   f.bridge.outbound = async () => { if (fail) throw new Error('preparation failed'); return () => {}; };
   await f.bridge.start(); f.push(message('failed', 'hello'));
   await until(() => f.sends.length === 1);
+  assert.match(f.sends[0].text, /回复/);
   assert.deepEqual(f.store.snapshot().inbox, []);
+  assert.equal(f.bridge.recentFailures.length, 1);
+  assert.equal(f.bridge.recentFailures[0].severity, 'warning');
   fail = false;
   f.push(message('failed', 'hello'), message('next', 'hello again'));
-  await until(() => f.sends.some(item => item.text === '回复'));
-  assert.deepEqual(f.calls.submits.map(item => item.requestId), ['wechat-next']);
+  await until(() => f.calls.submits.length === 2);
+  assert.deepEqual(f.calls.submits.map(item => item.requestId), ['wechat-failed', 'wechat-next']);
 });
 
 for (const status of ['queued', 'dispatching', 'submitted']) {
@@ -641,36 +644,34 @@ test('stop cleanup write failure can retry after storage recovers', async t => {
 });
 
 test('a before-submission failure re-prepares the same message instead of discarding it', async t => {
+  const f = await fixture(t, { prepareRetryDelaysMs: [5] });
   let attempts = 0;
-  const f = await fixture(t, {
-    prepareRetryDelaysMs: [5],
-    outbound: () => {
-      attempts += 1;
-      if (attempts === 1) throw Object.assign(new Error('agent unavailable'), { code: 'agent-unavailable' });
-      return () => {};
-    },
-  });
+  f.harness.createSession = async () => {
+    attempts += 1;
+    if (attempts === 1) throw Object.assign(new Error('resume raced'), { code: 'resume-race' });
+    return 'session-one';
+  };
   await f.bridge.start();
   f.push(message('task-retry', '你好'));
   await until(() => f.sends.some(item => item.clientId === 'wechat-reply-task-retry-0'));
+  assert.equal(attempts, 2, 'the message is re-prepared once');
   assert.equal(f.calls.submits.length, 1, 'the retried message is admitted exactly once');
   assert.equal(f.sends.find(item => item.clientId === 'wechat-reply-task-retry-0').text, '回复');
   assert.equal(f.sends.some(item => item.clientId === 'wechat-reply-failure-task-retry-0'), false);
-  assert.equal(attempts, 2);
   const failures = f.bridge.recentFailures;
   assert.equal(failures.length, 1);
-  assert.equal(failures[0].code, 'agent-unavailable');
+  assert.equal(failures[0].severity, 'error');
+  assert.equal(failures[0].code, 'resume-race');
   assert.equal(failures[0].stage, 'prepare');
   assert.equal(failures[0].attempt, 0);
-  assert.match(failures[0].detail, /agent unavailable/);
   await f.bridge.stop();
 });
 
 test('an exhausted prepare retry reports the failure and keeps the diagnostics', async t => {
-  const f = await fixture(t, {
-    prepareRetryDelaysMs: [5],
-    outbound: () => { throw Object.assign(new Error('session inspection exploded'), { code: 'inspect-failed' }); },
-  });
+  const f = await fixture(t, { prepareRetryDelaysMs: [5] });
+  f.harness.createSession = async () => {
+    throw Object.assign(new Error('session resume exploded'), { code: 'resume-failed' });
+  };
   await f.bridge.start();
   f.push(message('task-stuck', '再试'));
   await until(() => f.sends.some(item => item.clientId === 'wechat-reply-failure-task-stuck-0'));
@@ -682,5 +683,24 @@ test('an exhausted prepare retry reports the failure and keeps the diagnostics',
   assert.equal(failures[1].contextToken, true);
   assert.equal(f.store.snapshot().inbox.some(row => row.id === 'task-stuck'), false, 'the terminal row is pruned');
   assert.equal(f.store.snapshot().seen.includes('task-stuck'), true, 'deduplication keeps the ID');
+  await f.bridge.stop();
+});
+
+test('a failed media-capability install warns but still admits the text message', async t => {
+  const f = await fixture(t, {
+    outbound: () => { throw new Error('WeChat workspace is not a directory'); },
+  });
+  await f.store.update(state => { state.sessionId = 'session-one'; });
+  await f.bridge.start();
+  f.push(message('task-text', '你好'));
+  await until(() => f.sends.some(item => item.clientId === 'wechat-reply-task-text-0'));
+  assert.equal(f.calls.submits.length, 1, 'the text prompt is still submitted');
+  assert.equal(f.sends.find(item => item.clientId === 'wechat-reply-task-text-0').text, '回复');
+  assert.equal(f.sends.some(item => item.clientId === 'wechat-reply-failure-task-text-0'), false);
+  const warnings = f.bridge.recentFailures;
+  assert.equal(warnings.length, 1, 'the missing capability is recorded once');
+  assert.equal(warnings[0].severity, 'warning');
+  assert.equal(warnings[0].stage, 'outbound');
+  assert.match(warnings[0].detail, /workspace is not a directory/);
   await f.bridge.stop();
 });
