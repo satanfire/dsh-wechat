@@ -45,7 +45,7 @@ async function fixture(t, { sendTyping, submit, waitForReply, timeoutMs = 50 } =
     async waitForReply(...args) { return waitForReply ? waitForReply(...args) : 'done'; },
     async cancel() {},
   };
-  const bridge = new Bridge({ store, client, harness, ownerId: 'owner', typingIntervalMs: 15, typingTimeoutMs: timeoutMs });
+  const bridge = new Bridge({ store, client, harness, ownerId: 'owner', typingIntervalMs: 15, typingTimeoutMs: timeoutMs, prepareRetryDelaysMs: [] });
   const push = (...msgs) => {
     const value = { msgs, get_updates_buf: `cursor-${Date.now()}` };
     if (poll) { const old = poll; poll = null; old.resolve(value); } else batches.push(value);

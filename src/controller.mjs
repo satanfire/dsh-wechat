@@ -97,7 +97,8 @@ export class Controller {
     const s = this.store.snapshot();
     return { connected: !!this.bridge?.connected, enabled: s.enabled, sessionId: s.sessionId,
       sessionTitle: await this.#sessionTitle(s.sessionId),
-      error: this.error || this.bridge?.error || null, login: this.login, bound: !!s.binding };
+      error: this.error || this.bridge?.error || null, login: this.login, bound: !!s.binding,
+      failures: this.bridge?.recentFailures ?? [] };
   }
 
   /** Durable title projection of the bound Session; null when absent or unknown. */

@@ -25,6 +25,11 @@ const MAX_SEND_RETRY_DELAY_MS = 3_600_000;
 /** iLink blocks bot-initiated sends until the owner messages again. Hold instead of retrying. */
 const HELD_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_HELD = 20;
+/** Extra attempts for a message that failed before submission; nothing was admitted yet. */
+const DEFAULT_PREPARE_RETRY_DELAYS_MS = [1_000, 3_000];
+const MAX_PREPARE_RETRY_DELAYS = 3;
+/** Failures kept for the settings status; bounded so one long incident cannot grow state. */
+const MAX_RECORDED_FAILURES = 5;
 
 /** Keep one bounded retry schedule; any invalid plan falls back to the default one. */
 function retryDelays(value) {
@@ -38,6 +43,20 @@ function sendFailure(error) {
   const code = errorName(error);
   const provider = error?.providerCode === undefined ? '' : `:${String(error.providerCode).slice(0, 32)}`;
   return `${code}${provider}`.slice(0, 80);
+}
+
+/** Flatten one error's code and message chain into the bounded diagnostic line. */
+function failureDetail(error) {
+  const parts = [];
+  let current = error;
+  for (let depth = 0; depth < 4 && current !== undefined && current !== null; depth++) {
+    const code = typeof current?.code === 'string' ? current.code : '';
+    const message = typeof current?.message === 'string' ? current.message : String(current);
+    const part = `${code === '' ? '' : `${code}: `}${message}`.trim();
+    if (part !== '') parts.push(part.slice(0, 300));
+    current = current?.cause;
+  }
+  return parts.join(' <- ').slice(0, 600);
 }
 
 /** Optional feedback: bounded, serial, and never delays task admission. */
@@ -96,9 +115,9 @@ export class Bridge {
   #abort; #pollTask; #workTask; #sendTask; #timer; #controlTasks = new Set();
   #closing; #running = false; #connected = false; #error = null;
   #typingIntervalMs; #typingTimeoutMs; #typingState = { active: null }; #sessionList = null;
-  #retryDelays;
+  #retryDelays; #prepareRetryDelays; #failures = [];
 
-  constructor({ store, client, harness, ownerId, interactions, media, outbound, attachments, typingIntervalMs = 8000, typingTimeoutMs = 3000, sendRetryDelaysMs }) {
+  constructor({ store, client, harness, ownerId, interactions, media, outbound, attachments, typingIntervalMs = 8000, typingTimeoutMs = 3000, sendRetryDelaysMs, prepareRetryDelaysMs }) {
     if (!store || !client || !harness || !ownerId) throw new TypeError('Bridge dependencies required');
     this.#store = store; this.#client = client; this.#harness = harness;
     this.#ownerId = ownerId; this.#interactions = interactions;
@@ -108,9 +127,15 @@ export class Bridge {
     this.#typingIntervalMs = boundedMs(typingIntervalMs, 8000);
     this.#typingTimeoutMs = boundedMs(typingTimeoutMs, 3000);
     this.#retryDelays = retryDelays(sendRetryDelaysMs);
+    const prepare = prepareRetryDelaysMs === undefined
+      ? DEFAULT_PREPARE_RETRY_DELAYS_MS
+      : retryDelays(prepareRetryDelaysMs);
+    this.#prepareRetryDelays = prepare.length > MAX_PREPARE_RETRY_DELAYS ? prepare.slice(0, MAX_PREPARE_RETRY_DELAYS) : prepare;
   }
   get connected() { return this.#connected; }
   get error() { return this.#error; }
+  /** Recent dispatch failures with their stage and cause chain, oldest first. */
+  get recentFailures() { return this.#failures.map(entry => ({ ...entry })); }
   get status() { return { running: this.#running && !this.#closing && !this.#abort?.signal.aborted, connected: this.#connected, error: this.#error }; }
   async start() {
     if (this.#closing) throw new Error('Bridge stopping');
@@ -367,6 +392,25 @@ export class Bridge {
       catch (error) {
         if (signal.aborted) return;
         this.#error = errorName(error);
+        this.#recordFailure(item, error);
+        // A before-submission failure admits nothing, so the same message can be
+        // re-prepared safely: transient session/resume errors then self-heal
+        // instead of discarding the owner's message.
+        const retryDelay = error.beforeSubmission === true
+          ? this.#prepareRetryDelays[item.prepareAttempts ?? 0]
+          : undefined;
+        if (retryDelay !== undefined) {
+          await this.#store.update(state => {
+            const r = state.inbox.find(row => row.id === item.id);
+            if (!r) return;
+            r.status = 'queued';
+            r.prepareAttempts = (item.prepareAttempts ?? 0) + 1;
+            delete r.requestId;
+            delete r.sessionId;
+          });
+          try { await delay(retryDelay, undefined, { signal }); } catch { return; }
+          continue;
+        }
         await this.#store.update(state => {
           const r = state.inbox.find(row => row.id === item.id);
           if (r) {
@@ -381,6 +425,21 @@ export class Bridge {
         });
       }
     }
+  }
+  /** Keep one bounded, inspectable record of a dispatch failure for the settings status. */
+  #recordFailure(item, error) {
+    this.#failures.push({
+      at: Date.now(),
+      messageId: item.id,
+      stage: error.stage ?? (item.status === 'queued' ? 'prepare' : 'lookup'),
+      code: error.code ?? null,
+      detail: failureDetail(error),
+      attempt: item.prepareAttempts ?? 0,
+      media: (item.media?.length ?? 0) > 0,
+      contextToken: typeof item.contextToken === 'string' && item.contextToken.trim() !== '',
+      sessionId: item.sessionId ?? this.#store.snapshot().sessionId ?? null,
+    });
+    if (this.#failures.length > MAX_RECORDED_FAILURES) this.#failures.shift();
   }
   async #process(item, signal) {
     const requestId = item.requestId ?? `wechat-${item.id}`;

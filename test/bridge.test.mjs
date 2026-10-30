@@ -21,7 +21,7 @@ function deferred() {
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject };
 }
-async function fixture(t) {
+async function fixture(t, options = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-wechat-bridge-'));
   const store = await Store.open(dir);
   const updates = [];
@@ -53,7 +53,7 @@ async function fixture(t) {
     const batch = { msgs, get_updates_buf: `cursor-${++serial}` };
     if (pending.length) pending.shift().resolve(batch); else updates.push(batch);
   };
-  const bridge = new Bridge({ store, client, harness, ownerId: 'owner' });
+  const bridge = new Bridge({ store, client, harness, ownerId: 'owner', prepareRetryDelaysMs: [], ...options });
   t.after(async () => { await bridge.stop(); await store.close(); await fs.rm(dir, { recursive: true, force: true }); });
   return { dir, store, client, harness, calls, sends, push, bridge, listed, archived };
 }
@@ -638,4 +638,49 @@ test('stop cleanup write failure can retry after storage recovers', async t => {
   await f.bridge.start();
   await until(() => f.store.snapshot().seen.includes('\0outbox\0after-stop'));
   assert.equal(f.sends.length, 1);
+});
+
+test('a before-submission failure re-prepares the same message instead of discarding it', async t => {
+  let attempts = 0;
+  const f = await fixture(t, {
+    prepareRetryDelaysMs: [5],
+    outbound: () => {
+      attempts += 1;
+      if (attempts === 1) throw Object.assign(new Error('agent unavailable'), { code: 'agent-unavailable' });
+      return () => {};
+    },
+  });
+  await f.bridge.start();
+  f.push(message('task-retry', '你好'));
+  await until(() => f.sends.some(item => item.clientId === 'wechat-reply-task-retry-0'));
+  assert.equal(f.calls.submits.length, 1, 'the retried message is admitted exactly once');
+  assert.equal(f.sends.find(item => item.clientId === 'wechat-reply-task-retry-0').text, '回复');
+  assert.equal(f.sends.some(item => item.clientId === 'wechat-reply-failure-task-retry-0'), false);
+  assert.equal(attempts, 2);
+  const failures = f.bridge.recentFailures;
+  assert.equal(failures.length, 1);
+  assert.equal(failures[0].code, 'agent-unavailable');
+  assert.equal(failures[0].stage, 'prepare');
+  assert.equal(failures[0].attempt, 0);
+  assert.match(failures[0].detail, /agent unavailable/);
+  await f.bridge.stop();
+});
+
+test('an exhausted prepare retry reports the failure and keeps the diagnostics', async t => {
+  const f = await fixture(t, {
+    prepareRetryDelaysMs: [5],
+    outbound: () => { throw Object.assign(new Error('session inspection exploded'), { code: 'inspect-failed' }); },
+  });
+  await f.bridge.start();
+  f.push(message('task-stuck', '再试'));
+  await until(() => f.sends.some(item => item.clientId === 'wechat-reply-failure-task-stuck-0'));
+  assert.match(f.sends.find(item => item.clientId === 'wechat-reply-failure-task-stuck-0').text, /任务准备失败/);
+  assert.equal(f.calls.submits.length, 0);
+  const failures = f.bridge.recentFailures;
+  assert.equal(failures.length, 2, 'both the first attempt and the retry are recorded');
+  assert.deepEqual(failures.map(entry => entry.attempt), [0, 1]);
+  assert.equal(failures[1].contextToken, true);
+  assert.equal(f.store.snapshot().inbox.some(row => row.id === 'task-stuck'), false, 'the terminal row is pruned');
+  assert.equal(f.store.snapshot().seen.includes('task-stuck'), true, 'deduplication keeps the ID');
+  await f.bridge.stop();
 });
